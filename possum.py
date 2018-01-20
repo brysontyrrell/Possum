@@ -1,3 +1,5 @@
+import argparse
+import errno
 import io
 import os
 import shutil
@@ -8,6 +10,14 @@ import uuid
 
 import boto3
 from ruamel.yaml import YAML
+
+
+def parse_args():
+    parser = argparse.ArgumentParser('possum')
+    parser.add_argument('-b', '--s3-bucket')
+    parser.add_argument('-o', '--output-file')
+    parser.add_argument('-t', '--template')
+    
 
 PIPENV = shutil.which('pipenv')
 if not PIPENV:
@@ -66,6 +76,35 @@ def create_virtual_environment():
     p = subprocess.Popen(
         [
             PIPENV,
+            '--three'
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    p.communicate()
+
+
+def get_virtual_environment_path():
+    p = subprocess.Popen(
+        [
+            PIPENV,
+            '--venv'
+        ],
+        stdout=subprocess.PIPE
+    )
+    result = p.communicate()
+    return result[0].decode('ascii').strip('\n')
+
+
+def get_existing_site_packages(venv_path):
+    path = os.path.join(venv_path, 'lib/python3.6/site-packages')
+    return os.listdir(path)
+
+
+def install_packages():
+    p = subprocess.Popen(
+        [
+            PIPENV,
             'install'
         ],
         stdout=subprocess.DEVNULL,
@@ -74,35 +113,21 @@ def create_virtual_environment():
     p.communicate()
 
 
-def generate_requirements_txt():
-    with open('requirements.txt', 'wt') as fobj:
-        p = subprocess.Popen(
-            [
-                PIPENV,
-                'lock',
-                '-r'
-            ],
-            stdout=fobj
-        )
-        p.communicate()
+def _copy(src, dst):
+    try:
+        shutil.copytree(src, dst)
+    except OSError as exc:
+        if exc.errno == errno.ENOTDIR:
+            shutil.copy(src, dst)
+        else:
+            raise
 
 
-def install_requirements():
-    p = subprocess.Popen(
-        [
-            PIPENV,
-            'run',
-            'pip',
-            'install',
-            '-r',
-            './requirements.txt',
-            '-t',
-            './'
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    p.communicate()
+def copy_installed_packages(venv_path, exclusions):
+    path = os.path.join(venv_path, 'lib/python3.6/site-packages')
+    packages = [i for i in os.listdir(path) if i not in exclusions]
+    for package in packages:
+        _copy(os.path.join(path, package), os.path.join(os.getcwd(), package))
 
 
 def create_deployment_package(build_dir):
@@ -147,11 +172,17 @@ for func in LAMBDA_FUNCTIONS:
         print(f'{func}: Creating virtual environment...')
         create_virtual_environment()
 
-        print(f'{func}: Generating requirements.txt...')
-        generate_requirements_txt()
+        venv_path = get_virtual_environment_path()
 
-        print(f'{func}: Installing function requirements...')
-        install_requirements()
+        print(f'{func}: Virtual environment created at {venv_path}')
+
+        do_not_copy = get_existing_site_packages(venv_path)
+
+        print(f'{func}: Installing requirements...')
+        install_packages()
+
+        print(f'{func}: Copying installed packages...')
+        copy_installed_packages(venv_path, do_not_copy)
 
         print(f'{func}: Removing Lambda build virtual environment...')
         remove_virtualenv()
