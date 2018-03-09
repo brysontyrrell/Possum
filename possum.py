@@ -12,25 +12,55 @@ import boto3
 from ruamel.yaml import YAML
 
 
-def parse_args():
-    parser = argparse.ArgumentParser('possum')
-    parser.add_argument('-b', '--s3-bucket')
-    parser.add_argument('-o', '--output-file')
-    parser.add_argument('-t', '--template')
-    
+def arguments():
+    parser = argparse.ArgumentParser(
+        'possum',
+        description='Possum is a utility to package and deploy Python-based '
+                    'serverless applications using the Amazon Serverless '
+                    'Application model with per-function dependencies using '
+                    'Pipfiles.'
+    )
+
+    parser.add_argument(
+        's3_bucket',
+        help='The S3 bucket to upload artifacts',
+        type=str,
+        metavar='s3_bucket'
+    )
+
+    parser.add_argument(
+        '-t', '--template',
+        help='The filename of the SAM template',
+        type=str,
+        default='template.yaml',
+        metavar='template'
+    )
+
+    parser.add_argument(
+        '-o', '--output-template',
+        help='Optional filename for the output template',
+        type=str,
+        metavar='output'
+    )
+
+    return parser.parse_args()
+
+
+args = arguments()
+print(args)
 
 PIPENV = shutil.which('pipenv')
 if not PIPENV:
     raise Exception('pipenv is not installed')
 
 S3 = boto3.resource('s3')
-S3_BUCKET_NAME = 'possumdeploy'
+S3_BUCKET_NAME = args.s3_bucket
 S3_ARTIFACT_DIR = f'possum-{int(time.time())}'
 
 WORKING_DIR = os.getcwd()
 
 try:
-    with open('template.yaml') as fobj:
+    with open(args.template) as fobj:
         yaml = YAML()
         TEMPLATE = yaml.load(fobj)
 except Exception as error:
@@ -38,7 +68,7 @@ except Exception as error:
           f'{type(error).__name__}\n')
     raise SystemExit
 
-LAMBDA_FUNCTIONS = list()
+LAMBDA_FUNCTIONS = dict()
 
 for resource in TEMPLATE['Resources']:
     if TEMPLATE['Resources'][resource]['Type'] == 'AWS::Serverless::Function':
@@ -48,21 +78,21 @@ for resource in TEMPLATE['Resources']:
                   f'Found runtime "{runtime}" for function "{resource}"\n')
             raise SystemExit
         else:
-            LAMBDA_FUNCTIONS.append(resource)
+            LAMBDA_FUNCTIONS[resource] = TEMPLATE['Resources'][resource]
 
-PROJECT_DIRS = [
-    d for d in os.listdir(WORKING_DIR)
-    if not d.startswith('.') and os.path.isdir(d)
-]
-
-for func in LAMBDA_FUNCTIONS:
-    if func not in PROJECT_DIRS:
-        print(f'WARNING: No matching directory found for Lambda function '
-              f'"{func}" in template!')
-        raise SystemExit
+# PROJECT_DIRS = [
+#     d for d in os.listdir(WORKING_DIR)
+#     if not d.startswith('.') and os.path.isdir(d)
+# ]
+#
+# for func in LAMBDA_FUNCTIONS:
+#     if func not in PROJECT_DIRS:
+#         print(f'WARNING: No matching directory found for Lambda function '
+#               f'"{func}" in template!')
+#         raise SystemExit
 
 print("\nThe following functions will be packaged and deployed:")
-for func in LAMBDA_FUNCTIONS:
+for func in LAMBDA_FUNCTIONS.keys():
     print(f"  - {func}")
 
 BUILD_DIR = tempfile.mkdtemp(suffix='-build', prefix='possum-')
@@ -161,10 +191,10 @@ def update_template_function(resource, s3_object):
         f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
 
 
-for func in LAMBDA_FUNCTIONS:
+for func, values in LAMBDA_FUNCTIONS.items():
     func_dir = os.path.join(BUILD_DIR, func)
 
-    shutil.copytree(os.path.join(WORKING_DIR, func), func_dir)
+    shutil.copytree(os.path.join(WORKING_DIR, values['Properties']['CodeUri']), func_dir)
     os.chdir(func_dir)
     print(f'{func}: Working dir: {func_dir}')
 
@@ -193,17 +223,6 @@ for func in LAMBDA_FUNCTIONS:
     print('')
 
 
-print('\nUpdated SAM deployment template:\n')
-stream = io.StringIO()
-yaml.dump(TEMPLATE, stream)
-deployment_template = stream.getvalue()
-print(deployment_template)
-
-print("Writing deployment template to 'deployment-template.yaml'...")
-with open(os.path.join(WORKING_DIR, 'deployment-template.yaml'), 'wt') as fobj:
-    fobj.write(deployment_template)
-
-
 def upload_artifacts():
     print(f'\nUploading all Lambda build artifacts to: {S3_ARTIFACT_DIR}')
     os.chdir(ARTIFACTS_DIR)
@@ -215,5 +234,17 @@ def upload_artifacts():
 
 upload_artifacts()
 
-print('\nRemoving build directory...\n')
+print('\nRemoving build directory...')
 shutil.rmtree(BUILD_DIR)
+
+stream = io.StringIO()
+yaml.dump(TEMPLATE, stream)
+deployment_template = stream.getvalue()
+
+if not args.output_template:
+    print('\nUpdated SAM deployment template:\n')
+    print(deployment_template)
+else:
+    print(f"Writing deployment template to '{args.output_template}'...\n")
+    with open(os.path.join(WORKING_DIR, args.output_template), 'wt') as fobj:
+        fobj.write(deployment_template)
