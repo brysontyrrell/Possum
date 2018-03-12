@@ -1,0 +1,276 @@
+#!/usr/bin/env python
+
+import argparse
+import errno
+import io
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+import uuid
+
+import boto3
+from boto3.exceptions import S3UploadFailedError
+from botocore.exceptions import ClientError
+from ruamel.yaml import YAML
+
+__title__ = 'possum'
+__version__ = '1.2'
+__author__ = 'Bryson Tyrrell'
+__author_email__ = 'bryson.tyrrell@gmail.com'
+__license__ = 'MIT'
+__copyright__ = 'Copyright 2018 Bryson Tyrrell'
+
+
+def arguments():
+    parser = argparse.ArgumentParser(
+        'possum',
+        description='Possum is a utility to package and deploy Python-based '
+                    'serverless applications using the Amazon Serverless '
+                    'Application model with per-function dependencies using '
+                    'Pipfiles.'
+    )
+
+    parser.add_argument(
+        's3_bucket',
+        help='The S3 bucket to upload artifacts',
+        type=str,
+        metavar='s3_bucket'
+    )
+
+    parser.add_argument(
+        '-t', '--template',
+        help='The filename of the SAM template',
+        type=str,
+        default='template.yaml',
+        metavar='template'
+    )
+
+    parser.add_argument(
+        '-o', '--output-template',
+        help='Optional filename for the output template',
+        type=str,
+        metavar='output'
+    )
+
+    return parser.parse_args()
+
+
+def create_virtual_environment(pipenv_path):
+    p = subprocess.Popen(
+        [
+            pipenv_path,
+            '--three'
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    p.communicate()
+
+
+def get_virtual_environment_path(pipenv_path):
+    p = subprocess.Popen(
+        [
+            pipenv_path,
+            '--venv'
+        ],
+        stdout=subprocess.PIPE
+    )
+    result = p.communicate()
+    return result[0].decode('ascii').strip('\n')
+
+
+def get_existing_site_packages(venv_path):
+    # This can't be hard coded - will fail non-Python 3.6 deployments
+    path = os.path.join(venv_path, 'lib/python3.6/site-packages')
+    return os.listdir(path)
+
+
+def install_packages(pipenv_path):
+    p = subprocess.Popen(
+        [
+            pipenv_path,
+            'install'
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    p.communicate()
+
+
+def _copy(src, dst):
+    try:
+        shutil.copytree(src, dst)
+    except OSError as exc:
+        if exc.errno == errno.ENOTDIR:
+            shutil.copy(src, dst)
+        else:
+            raise
+
+
+def copy_installed_packages(venv_path, exclusions):
+    path = os.path.join(venv_path, 'lib/python3.6/site-packages')
+    packages = [i for i in os.listdir(path) if i not in exclusions]
+    for package in packages:
+        _copy(os.path.join(path, package), os.path.join(os.getcwd(), package))
+
+
+def create_deployment_package(build_dir, artifact_directory):
+    archive_name = uuid.uuid4().hex
+    shutil.make_archive(
+        archive_name,
+        'zip',
+        root_dir=build_dir,
+        base_dir='./'
+    )
+
+    print('Moving Zip archive to the artifacts directory...')
+    shutil.move(archive_name + '.zip', artifact_directory)
+    return archive_name + '.zip'
+
+
+def remove_virtualenv(pipenv_path):
+    p = subprocess.Popen(
+        [
+            pipenv_path,
+            '--rm'
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    p.communicate()
+
+
+def update_template_function(
+        template, resource, s3_bucket, s3_directory, s3_object):
+    template['Resources'][resource]['Properties']['CodeUri'] = \
+        f's3://{s3_bucket}/{s3_directory}/{s3_object}'
+
+
+def upload_artifacts(s3_bucket, s3_directory, artifact_directory):
+    s3_client = boto3.resource('s3')
+    print(f'\nUploading all Lambda build artifacts to: {s3_directory}')
+
+    os.chdir(artifact_directory)
+    for artifact in os.listdir('.'):
+        print(f'Uploading artifact: {artifact}')
+        try:
+            s3_client.Bucket(s3_bucket).upload_file(
+                artifact, os.path.join(s3_directory, artifact))
+        except (S3UploadFailedError, ClientError)as err:
+            print('\nERROR: Failed to upload the artifact to the S3 bucket! '
+                  f'Encountered:\n{err}')
+            raise SystemExit
+
+
+def main():
+    args = arguments()
+    print(args)
+
+    pipenv_path = shutil.which('pipenv')
+    if not pipenv_path:
+        raise Exception("'pipenv' not found")
+
+    working_directory = os.getcwd()
+    s3_artifact_directory = f'possum-{int(time.time())}'
+
+    try:
+        with open(args.template) as fobj:
+            yaml = YAML()
+            template_file = yaml.load(fobj)
+    except Exception as error:
+        print('ERROR: Failed to load template file! Encountered: '
+              f'{type(error).__name__}\n')
+        raise SystemExit
+
+    lambda_functions = dict()
+
+    for resource in template_file['Resources']:
+        if template_file['Resources'][resource]['Type'] == \
+                'AWS::Serverless::Function':
+            runtime = \
+                template_file['Resources'][resource]['Properties']['Runtime']
+            if not runtime.lower().startswith('python'):
+                print(
+                    'ERROR: Possum only deploys Python based Lambda functions! '
+                    f'Found runtime "{runtime}" for function "{resource}"\n')
+                raise SystemExit
+            else:
+                lambda_functions[resource] = \
+                    template_file['Resources'][resource]
+
+    print("\nThe following functions will be packaged and deployed:")
+    for func in lambda_functions.keys():
+        print(f"  - {func}")
+
+    build_directory = tempfile.mkdtemp(suffix='-build', prefix='possum-')
+    print(f'\nBuild directory: {build_directory}\n')
+
+    build_artifact_directory = os.path.join(build_directory, 's3_artifacts')
+    os.mkdir(build_artifact_directory)
+
+    for func, values in lambda_functions.items():
+        func_dir = os.path.join(build_directory, func)
+
+        shutil.copytree(
+            os.path.join(working_directory, values['Properties']['CodeUri']),
+            func_dir)
+        os.chdir(func_dir)
+        print(f'{func}: Working dir: {func_dir}')
+
+        if [i for i in os.listdir('.') if i in ('Pipfile', 'Pipfile.lock')]:
+            print(f'{func}: Creating virtual environment...')
+            create_virtual_environment(pipenv_path)
+
+            venv_path = get_virtual_environment_path(pipenv_path)
+
+            print(f'{func}: Virtual environment created at {venv_path}')
+
+            do_not_copy = get_existing_site_packages(venv_path)
+
+            print(f'{func}: Installing requirements...')
+            install_packages(pipenv_path)
+
+            print(f'{func}: Copying installed packages...')
+            copy_installed_packages(venv_path, do_not_copy)
+
+            print(f'{func}: Removing Lambda build virtual environment...')
+            remove_virtualenv(pipenv_path)
+
+        print(f'{func}: Creating Lambda function Zip archive...')
+        artifact = create_deployment_package(func_dir, build_artifact_directory)
+        update_template_function(
+            template_file,
+            func,
+            args.s3_bucket,
+            s3_artifact_directory,
+            artifact
+        )
+        print('')
+
+    upload_artifacts(
+        args.s3_bucket,
+        s3_artifact_directory,
+        build_artifact_directory
+    )
+
+    print('\nRemoving build directory...')
+    shutil.rmtree(build_directory)
+
+    stream = io.StringIO()
+    yaml.dump(template_file, stream)
+    deployment_template = stream.getvalue()
+
+    if not args.output_template:
+        print('\nUpdated SAM deployment template:\n')
+        print(deployment_template)
+    else:
+        print(f"Writing deployment template to '{args.output_template}'...\n")
+        with open(os.path.join(working_directory, args.output_template),
+                  'wt') as fobj:
+            fobj.write(deployment_template)
+
+
+if __name__ == '__main__':
+    main()
