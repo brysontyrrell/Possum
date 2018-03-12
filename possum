@@ -16,7 +16,7 @@ from botocore.exceptions import ClientError
 from ruamel.yaml import YAML
 
 __title__ = 'possum'
-__version__ = '1.2'
+__version__ = '1.0'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
