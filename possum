@@ -166,7 +166,6 @@ def upload_artifacts(s3_bucket, s3_directory, artifact_directory):
 
 def main():
     args = arguments()
-    print(args)
 
     pipenv_path = shutil.which('pipenv')
     if not pipenv_path:
@@ -219,7 +218,8 @@ def main():
         os.chdir(func_dir)
         print(f'{func}: Working dir: {func_dir}')
 
-        if [i for i in os.listdir('.') if i in ('Pipfile', 'Pipfile.lock')]:
+        requirements_files = ('Pipfile', 'Pipfile.lock', 'requirements.txt')
+        if [i for i in os.listdir('.') if i in requirements_files]:
             print(f'{func}: Creating virtual environment...')
             create_virtual_environment(pipenv_path)
 

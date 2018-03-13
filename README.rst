@@ -3,6 +3,18 @@ Possum
 
 *Python AWS SAM* --> *PyAWSSAM* --> *Pawssam* --> **Possum**
 
+Install
+-------
+
+Possum can be installed from the Python Package Index:
+
+::
+
+    $ pip install possum
+
+Possum required **Python 3.6+** and **pipenv** (*pipenv* must be installed
+separately and is not installed with Possum).
+
 About
 -----
 
