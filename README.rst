@@ -39,7 +39,7 @@ application.
 
 ::
 
-    $ python /path/to/possum.py '<s3-bucket-name>'
+    $ possum '<s3-bucket-name>'
 
 The above command will package the Python Lambda functions and upload
 them to S3 assuming the template file is named ``template.yaml``. You
@@ -47,7 +47,7 @@ can specify the template's name with the ``-t/--template`` argument:
 
 ::
 
-    $ python /path/to/possum.py '<s3-bucket-name>' -t my-template.yml
+    $ possum '<s3-bucket-name>' -t my-template.yml
 
 The generated deployment template will printed on the screen.
 
@@ -56,19 +56,19 @@ passing a name to the ``-o/--output-template`` argument:
 
 ::
 
-    $ python /path/to/possum.py '<s3-bucket-name>' -o deployment.yaml
+    $ possum '<s3-bucket-name>' -o deployment.yaml
 
 You can view the options and instructions for using Possum with the
 ``-h`` argument:
 
 ::
 
-    $ python /path/to/possum.py -h
+    $ possum -h
     usage: possum [-h] [-t template] [-o output] s3_bucket
 
-    Possum is a utility to package and deploy Python-based serverless applications
-    using the Amazon Serverless Application model with per-function dependencies
-    using Pipfiles.
+    Possum is a utility to package and deploy Python-based serverless
+    applications using the Amazon Serverless Application model with
+    per-function dependencies using Pipfiles.
 
     positional arguments:
       s3_bucket             The S3 bucket to upload artifacts
@@ -122,3 +122,15 @@ and written ``stdout`` or a file if the ``-o`` argument was provided.
 
 The generated deployment template can be used with ``sam deploy`` or
 ``aws cloudformation deploy`` to deploy the application.
+
+AWS Credentials
+---------------
+
+Possum uses the Boto3 SDK for uploading artifacts to S3. You can set your
+AWS access and secret keys in your environment variables as described in
+the Boto3 documentation. Possom also accept a profile name for your AWS
+credentials file via the ``-p--profile`` argument.
+
+::
+
+    $ possum '<s3-bucket-name>' --profile '<my-profile-name>'

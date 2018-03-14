@@ -16,11 +16,16 @@ from botocore.exceptions import ClientError
 from ruamel.yaml import YAML
 
 __title__ = 'possum'
-__version__ = '1.0'
+__version__ = '1.1'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
 __copyright__ = 'Copyright 2018 Bryson Tyrrell'
+
+WORKING_DIR = os.getcwd()
+PIPENV_PATH = shutil.which('pipenv')
+S3_BUCKET_NAME = ''
+S3_ARTIFACT_DIR = ''
 
 
 def arguments():
@@ -54,13 +59,20 @@ def arguments():
         metavar='output'
     )
 
+    parser.add_argument(
+        '-p', '--profile',
+        help='Optional profile name for AWS credentials',
+        type=str,
+        metavar='profile_name'
+    )
+
     return parser.parse_args()
 
 
-def create_virtual_environment(pipenv_path):
+def create_virtual_environment():
     p = subprocess.Popen(
         [
-            pipenv_path,
+            PIPENV_PATH,
             '--three'
         ],
         stdout=subprocess.PIPE,
@@ -69,10 +81,10 @@ def create_virtual_environment(pipenv_path):
     p.communicate()
 
 
-def get_virtual_environment_path(pipenv_path):
+def get_virtual_environment_path():
     p = subprocess.Popen(
         [
-            pipenv_path,
+            PIPENV_PATH,
             '--venv'
         ],
         stdout=subprocess.PIPE
@@ -87,10 +99,10 @@ def get_existing_site_packages(venv_path):
     return os.listdir(path)
 
 
-def install_packages(pipenv_path):
+def install_packages():
     p = subprocess.Popen(
         [
-            pipenv_path,
+            PIPENV_PATH,
             'install'
         ],
         stdout=subprocess.DEVNULL,
@@ -130,10 +142,10 @@ def create_deployment_package(build_dir, artifact_directory):
     return archive_name + '.zip'
 
 
-def remove_virtualenv(pipenv_path):
+def remove_virtualenv():
     p = subprocess.Popen(
         [
-            pipenv_path,
+            PIPENV_PATH,
             '--rm'
         ],
         stdout=subprocess.DEVNULL,
@@ -142,22 +154,23 @@ def remove_virtualenv(pipenv_path):
     p.communicate()
 
 
-def update_template_function(
-        template, resource, s3_bucket, s3_directory, s3_object):
+def update_template_function(template, resource, s3_object):
     template['Resources'][resource]['Properties']['CodeUri'] = \
-        f's3://{s3_bucket}/{s3_directory}/{s3_object}'
+        f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
 
 
-def upload_artifacts(s3_bucket, s3_directory, artifact_directory):
-    s3_client = boto3.resource('s3')
-    print(f'\nUploading all Lambda build artifacts to: {s3_directory}')
+def upload_artifacts(artifact_directory, profile_name=None):
+    session = boto3.Session(profile_name=profile_name)
+    s3_client = session.resource('s3')
 
     os.chdir(artifact_directory)
+    print(f'\nUploading all Lambda build artifacts to: {S3_ARTIFACT_DIR}')
+
     for artifact in os.listdir('.'):
         print(f'Uploading artifact: {artifact}')
         try:
-            s3_client.Bucket(s3_bucket).upload_file(
-                artifact, os.path.join(s3_directory, artifact))
+            s3_client.Bucket(S3_BUCKET_NAME).upload_file(
+                artifact, os.path.join(S3_ARTIFACT_DIR, artifact))
         except (S3UploadFailedError, ClientError)as err:
             print('\nERROR: Failed to upload the artifact to the S3 bucket! '
                   f'Encountered:\n{err}')
@@ -167,12 +180,14 @@ def upload_artifacts(s3_bucket, s3_directory, artifact_directory):
 def main():
     args = arguments()
 
-    pipenv_path = shutil.which('pipenv')
-    if not pipenv_path:
+    if not PIPENV_PATH:
         raise Exception("'pipenv' not found")
 
-    working_directory = os.getcwd()
-    s3_artifact_directory = f'possum-{int(time.time())}'
+    global S3_BUCKET_NAME
+    S3_BUCKET_NAME = args.s3_bucket
+
+    global S3_ARTIFACT_DIR
+    S3_ARTIFACT_DIR = f'possum-{int(time.time())}'
 
     try:
         with open(args.template) as fobj:
@@ -213,7 +228,7 @@ def main():
         func_dir = os.path.join(build_directory, func)
 
         shutil.copytree(
-            os.path.join(working_directory, values['Properties']['CodeUri']),
+            os.path.join(WORKING_DIR, values['Properties']['CodeUri']),
             func_dir)
         os.chdir(func_dir)
         print(f'{func}: Working dir: {func_dir}')
@@ -221,38 +236,35 @@ def main():
         requirements_files = ('Pipfile', 'Pipfile.lock', 'requirements.txt')
         if [i for i in os.listdir('.') if i in requirements_files]:
             print(f'{func}: Creating virtual environment...')
-            create_virtual_environment(pipenv_path)
+            create_virtual_environment()
 
-            venv_path = get_virtual_environment_path(pipenv_path)
+            venv_path = get_virtual_environment_path()
 
             print(f'{func}: Virtual environment created at {venv_path}')
 
             do_not_copy = get_existing_site_packages(venv_path)
 
             print(f'{func}: Installing requirements...')
-            install_packages(pipenv_path)
+            install_packages()
 
             print(f'{func}: Copying installed packages...')
             copy_installed_packages(venv_path, do_not_copy)
 
             print(f'{func}: Removing Lambda build virtual environment...')
-            remove_virtualenv(pipenv_path)
+            remove_virtualenv()
 
         print(f'{func}: Creating Lambda function Zip archive...')
         artifact = create_deployment_package(func_dir, build_artifact_directory)
         update_template_function(
             template_file,
             func,
-            args.s3_bucket,
-            s3_artifact_directory,
             artifact
         )
         print('')
 
     upload_artifacts(
-        args.s3_bucket,
-        s3_artifact_directory,
-        build_artifact_directory
+        build_artifact_directory,
+        args.profile
     )
 
     print('\nRemoving build directory...')
@@ -267,7 +279,7 @@ def main():
         print(deployment_template)
     else:
         print(f"Writing deployment template to '{args.output_template}'...\n")
-        with open(os.path.join(working_directory, args.output_template),
+        with open(os.path.join(WORKING_DIR, args.output_template),
                   'wt') as fobj:
             fobj.write(deployment_template)
 
