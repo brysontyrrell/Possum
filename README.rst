@@ -58,17 +58,24 @@ passing a name to the ``-o/--output-template`` argument:
 
     $ possum '<s3-bucket-name>' -o deployment.yaml
 
+Possum uses hashes of your function directories to determine if changes have
+occurred since the last run of the command. Hashes and S3 URIs are saved in a
+``~/.possum`` directory for each project you package with Possum.
+
+To force Possum to build all functions and skip the hash check, use the
+``-c/--clean`` argument.
+
 You can view the options and instructions for using Possum with the
 ``-h`` argument:
 
 ::
 
     $ possum -h
-    usage: possum [-h] [-t template] [-o output] s3_bucket
+    usage: possum [-h] [-t template] [-o output] [-p profile_name] [-c] s3_bucket
 
-    Possum is a utility to package and deploy Python-based serverless
-    applications using the Amazon Serverless Application model with
-    per-function dependencies using Pipfiles.
+    Possum is a utility to package and deploy Python-based serverless applications
+    using the Amazon Serverless Application model with per-function dependencies
+    using Pipfiles.
 
     positional arguments:
       s3_bucket             The S3 bucket to upload artifacts
@@ -79,6 +86,9 @@ You can view the options and instructions for using Possum with the
                             The filename of the SAM template
       -o output, --output-template output
                             Optional filename for the output template
+      -p profile_name, --profile profile_name
+                            Optional profile name for AWS credentials
+      -c, --clean           Build all Lambda packages, ignoring previous run
 
 Repository Structure
 --------------------
@@ -111,9 +121,9 @@ Possum will exit with an error if the function's ``Properties:Runtime``
 value does not match ``python*``.
 
 The contents of each functions' directory will be copied to a temporary
-build directory. If a ``Pipfile`` and ``Pipfile.lock`` exist, the
-external packages will be installed into the build directory. The entire
-contents of the build directory will then be zipped into a deployable
+build directory. If a ``Pipfile``/``Pipfile.lock`` or ``requirements.txt``
+exist, the external packages will be installed into the build directory. The
+entire contents of the build directory will then be zipped into a deployable
 Lambda artifact.
 
 All artifacts will be uploaded to the provided S3 bucket. The imported

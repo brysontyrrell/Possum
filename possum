@@ -2,6 +2,7 @@
 
 import argparse
 import errno
+import hashlib
 import io
 import os
 import shutil
@@ -13,16 +14,17 @@ import uuid
 import boto3
 from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError
-from ruamel.yaml import YAML
+from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
-__version__ = '1.1'
+__version__ = '1.2'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
 __copyright__ = 'Copyright 2018 Bryson Tyrrell'
 
 WORKING_DIR = os.getcwd()
+POSSUM_PATH = ''
 PIPENV_PATH = shutil.which('pipenv')
 S3_BUCKET_NAME = ''
 S3_ARTIFACT_DIR = ''
@@ -66,7 +68,84 @@ def arguments():
         metavar='profile_name'
     )
 
+    parser.add_argument(
+        '-c', '--clean',
+        help='Build all Lambda packages, ignoring previous run',
+        action='store_true'
+    )
+
     return parser.parse_args()
+
+
+def possum_name():
+    return f'{os.path.split(WORKING_DIR)[-1]}-' \
+           f'{hashlib.sha1(WORKING_DIR.encode()).hexdigest()[-8:]}'
+
+
+def get_possum_path():
+    user_dir = os.path.expanduser('~')
+    possum_dir = os.path.join(user_dir, '.possum')
+    if not os.path.exists(possum_dir):
+        print('Creating Possum directory...')
+        os.mkdir(possum_dir)
+    elif not os.path.isdir(possum_dir):
+        print(f"ERROR: '{possum_dir}' if not a directory! Delete to allow "
+              "Possum to recreate the directory")
+        raise SystemExit
+
+    return os.path.join(possum_dir, possum_name())
+
+
+def hash_directory(path):
+    dir_hash = hashlib.sha1()
+
+    for root, dirs, files in os.walk(path):
+        for names in files:
+            file_path = os.path.join(root, names)
+            if os.path.isfile(file_path):
+                with open(file_path, 'rb') as f_obj:
+                    while True:
+                        buf = f_obj.read(1024 * 1024)
+                        if not buf:
+                            break
+                        dir_hash.update(buf)
+
+    return dir_hash.hexdigest()
+
+
+class PossumFile(object):
+    def __init__(self):
+        try:
+            with open(POSSUM_PATH, 'r') as f_obj:
+                data = YAML().load(f_obj)
+        except FileNotFoundError:
+            data = {
+                'lastRun': dict(),
+                's3Uris': dict()
+            }
+
+        self._data = data
+
+    def save(self):
+        with open(POSSUM_PATH, 'w') as f_obj:
+            YAML().dump(self._data, f_obj)
+
+    def check_hash(self, func_name, source_dir):
+        last_hash = self._data['lastRun'].get(func_name)
+        source_hash = hash_directory(source_dir)
+
+        if last_hash == source_hash:
+            return True
+        else:
+            self._data['lastRun'][func_name] = source_hash
+            return False
+
+    def get_last_s3_uri(self, func_name):
+        s3_uri = self._data['s3Uris'].get(func_name)
+        return s3_uri
+
+    def set_s3_uri(self, func_name, s3_uri):
+        self._data['s3Uris'][func_name] = s3_uri
 
 
 def create_virtual_environment():
@@ -137,7 +216,6 @@ def create_deployment_package(build_dir, artifact_directory):
         base_dir='./'
     )
 
-    print('Moving Zip archive to the artifacts directory...')
     shutil.move(archive_name + '.zip', artifact_directory)
     return archive_name + '.zip'
 
@@ -154,9 +232,12 @@ def remove_virtualenv():
     p.communicate()
 
 
-def update_template_function(template, resource, s3_object):
-    template['Resources'][resource]['Properties']['CodeUri'] = \
-        f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
+def update_template_function(template, resource, s3_object=None, s3_uri=None):
+    if s3_object:
+        template['Resources'][resource]['Properties']['CodeUri'] = \
+            f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
+    elif s3_uri:
+        template['Resources'][resource]['Properties']['CodeUri'] = s3_uri
 
 
 def upload_artifacts(artifact_directory, profile_name=None):
@@ -164,7 +245,7 @@ def upload_artifacts(artifact_directory, profile_name=None):
     s3_client = session.resource('s3')
 
     os.chdir(artifact_directory)
-    print(f'\nUploading all Lambda build artifacts to: {S3_ARTIFACT_DIR}')
+    print(f'Uploading all Lambda build artifacts to: {S3_ARTIFACT_DIR}')
 
     for artifact in os.listdir('.'):
         print(f'Uploading artifact: {artifact}')
@@ -181,7 +262,11 @@ def main():
     args = arguments()
 
     if not PIPENV_PATH:
-        raise Exception("'pipenv' not found")
+        print("ERROR: 'pipenv' not found")
+        raise SystemExit
+
+    global POSSUM_PATH
+    POSSUM_PATH = get_possum_path()
 
     global S3_BUCKET_NAME
     S3_BUCKET_NAME = args.s3_bucket
@@ -189,10 +274,10 @@ def main():
     global S3_ARTIFACT_DIR
     S3_ARTIFACT_DIR = f'possum-{int(time.time())}'
 
+    # yaml = YAML()
     try:
         with open(args.template) as fobj:
-            yaml = YAML()
-            template_file = yaml.load(fobj)
+            template_file = YAML().load(fobj)
     except Exception as error:
         print('ERROR: Failed to load template file! Encountered: '
               f'{type(error).__name__}\n')
@@ -205,11 +290,15 @@ def main():
                 'AWS::Serverless::Function':
             runtime = \
                 template_file['Resources'][resource]['Properties']['Runtime']
+
             if not runtime.lower().startswith('python'):
-                print(
-                    'ERROR: Possum only deploys Python based Lambda functions! '
-                    f'Found runtime "{runtime}" for function "{resource}"\n')
-                raise SystemExit
+                print('\nWARNING: Possum only packages Python based Lambda '
+                      f'functions! Found runtime "{runtime}" for function '
+                      f'"{resource}" This Lambda function will be skipped. You '
+                      'will need to package this function separately before '
+                      'deploying.\n')
+                continue
+
             else:
                 lambda_functions[resource] = \
                     template_file['Resources'][resource]
@@ -218,6 +307,12 @@ def main():
     for func in lambda_functions.keys():
         print(f"  - {func}")
 
+    try:
+        possum_file = PossumFile()
+    except scanner.ScannerError:
+        print(f"\nERROR: The Possum file '{POSSUM_PATH}' is invalid!")
+        raise SystemExit
+
     build_directory = tempfile.mkdtemp(suffix='-build', prefix='possum-')
     print(f'\nBuild directory: {build_directory}\n')
 
@@ -225,13 +320,25 @@ def main():
     os.mkdir(build_artifact_directory)
 
     for func, values in lambda_functions.items():
-        func_dir = os.path.join(build_directory, func)
+        func_source_dir = os.path.join(
+            WORKING_DIR, values['Properties']['CodeUri'])
 
-        shutil.copytree(
-            os.path.join(WORKING_DIR, values['Properties']['CodeUri']),
-            func_dir)
-        os.chdir(func_dir)
-        print(f'{func}: Working dir: {func_dir}')
+        func_build_dir = os.path.join(build_directory, func)
+
+        if possum_file.check_hash(func, func_source_dir) and not args.clean:
+            last_s3_uri = possum_file.get_last_s3_uri(func)
+            if last_s3_uri:
+                print(f'{func}: No changes detected')
+                print(f'{func}: Using S3 artifact: {last_s3_uri}\n')
+                update_template_function(
+                    template_file,
+                    func,
+                    s3_uri=last_s3_uri)
+                continue
+
+        shutil.copytree(func_source_dir, func_build_dir)
+        os.chdir(func_build_dir)
+        print(f'{func}: Working dir: {func_build_dir}')
 
         requirements_files = ('Pipfile', 'Pipfile.lock', 'requirements.txt')
         if [i for i in os.listdir('.') if i in requirements_files]:
@@ -254,12 +361,14 @@ def main():
             remove_virtualenv()
 
         print(f'{func}: Creating Lambda function Zip archive...')
-        artifact = create_deployment_package(func_dir, build_artifact_directory)
+        artifact = create_deployment_package(func_build_dir, build_artifact_directory)
         update_template_function(
             template_file,
             func,
-            artifact
+            s3_object=artifact
         )
+        possum_file.set_s3_uri(
+            func, template_file['Resources'][func]['Properties']['CodeUri'])
         print('')
 
     upload_artifacts(
@@ -271,7 +380,7 @@ def main():
     shutil.rmtree(build_directory)
 
     stream = io.StringIO()
-    yaml.dump(template_file, stream)
+    YAML().dump(template_file, stream)
     deployment_template = stream.getvalue()
 
     if not args.output_template:
@@ -282,6 +391,8 @@ def main():
         with open(os.path.join(WORKING_DIR, args.output_template),
                   'wt') as fobj:
             fobj.write(deployment_template)
+
+    possum_file.save()
 
 
 if __name__ == '__main__':
