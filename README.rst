@@ -90,11 +90,8 @@ You can view the options and instructions for using Possum with the
                             Optional profile name for AWS credentials
       -c, --clean           Build all Lambda packages, ignoring previous run
 
-Repository Structure
---------------------
-
-Possum is designed around a serverless application existing entirely
-within a single repository.
+Here is an example of a serverless Python application with multiple Lambda
+functions in a single repository:
 
 ::
 
@@ -112,13 +109,12 @@ within a single repository.
             |___Pipfile
             |___Pipfile.lock
 
-At the root level of the repository is the ``template.yaml`` file for
-CloudFormation.
-
 For each AWS Lambda function defined in the template, Possum references
 the ``Properties:CodeUri`` key for the path to the function's directory.
-Possum will exit with an error if the function's ``Properties:Runtime``
-value does not match ``python*``.
+
+Possum will display a warning if the function's ``Properties:Runtime``
+value does not match ``python*``. You will need to package these remaining
+functions separately.
 
 The contents of each functions' directory will be copied to a temporary
 build directory. If a ``Pipfile``/``Pipfile.lock`` or ``requirements.txt``
