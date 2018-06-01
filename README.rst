@@ -31,6 +31,18 @@ Possum aims to serve as a replacement to the basic package functions.
 The tool is based upon my approach to serverless AWS applications
 (opinionated) and may not be a fit for all parties.
 
+AWS Credentials
+---------------
+
+Possum uses the Boto3 SDK for uploading artifacts to S3. You can set your
+AWS access and secret keys in your environment variables as described in
+the Boto3 documentation. Possom also accept a profile name for your AWS
+credentials file via the ``-p/--profile`` argument.
+
+::
+
+    $ possum '<s3-bucket-name>' --profile '<my-profile-name>'
+
 Basic Usage
 -----------
 
@@ -71,7 +83,9 @@ You can view the options and instructions for using Possum with the
 ::
 
     $ possum -h
-    usage: possum [-h] [-t template] [-o output] [-p profile_name] [-c] s3_bucket
+    usage: possum [-h] [-t template] [-o output] [-p profile_name] [-c] [--docker]
+              [--docker-image image_name]
+              s3_bucket
 
     Possum is a utility to package and deploy Python-based serverless applications
     using the Amazon Serverless Application model with per-function dependencies
@@ -89,6 +103,40 @@ You can view the options and instructions for using Possum with the
       -p profile_name, --profile profile_name
                             Optional profile name for AWS credentials
       -c, --clean           Build all Lambda packages, ignoring previous run
+      --docker              Build Lambda packages within a Docker container
+                            environment
+      --docker-image image_name
+                            Specify a Docker image to use (defaults to
+                            'possum:latest'
+
+Docker Support
+--------------
+
+The installation of some Python packages differ based on the underlying system
+(cryptography.io is an example). To ensure your installed dependencies are
+fully compatible with the Lambda environment, you may opt to run Possum within
+a Docker container.
+
+The included ``Dockerfile`` in this project will create a compatible default
+image to use. Run the following command from the same directory as the
+``Dockerfile`` to build the image:
+
+::
+
+    $ docker build . -t possum:latest
+
+This image is based upon ``lambci/lambda:build-python3.6``. You may build your
+own custom image and specify it using the ``--docker-image`` argument. If you
+decide to use your own image it must have ``pipenv`` and ``possum`` installed!
+
+Launch Possum in a container using the ``--docker`` argument:
+
+::
+
+    $ possum '<s3-bucket-name>' --docker
+
+Serverless App Repository Example
+---------------------------------
 
 Here is an example of a serverless Python application with multiple Lambda
 functions in a single repository:
@@ -128,15 +176,3 @@ and written ``stdout`` or a file if the ``-o`` argument was provided.
 
 The generated deployment template can be used with ``sam deploy`` or
 ``aws cloudformation deploy`` to deploy the application.
-
-AWS Credentials
----------------
-
-Possum uses the Boto3 SDK for uploading artifacts to S3. You can set your
-AWS access and secret keys in your environment variables as described in
-the Boto3 documentation. Possom also accept a profile name for your AWS
-credentials file via the ``-p--profile`` argument.
-
-::
-
-    $ possum '<s3-bucket-name>' --profile '<my-profile-name>'
