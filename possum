@@ -17,6 +17,7 @@ import boto3
 from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError
 import docker
+from docker.errors import APIError
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
@@ -349,7 +350,11 @@ def run_in_docker(image_name):
         detach=True
     )
 
-    container.start()
+    try:
+        container.start()
+    except APIError as err:
+        logger.error(f'Unable to start the Docker container: {err.explanation}')
+        sys.exit(1)
 
     for event in container.logs(stream=True):
         print(event.decode().strip())
