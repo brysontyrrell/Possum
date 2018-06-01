@@ -27,6 +27,7 @@ setup(
     python_requires='>=3.6',
     install_requires=[
         'boto3>=1.6.6',
+        'docker==3.2.1',
         'ruamel.yaml>=0.15.35'
     ],
     classifiers=[

@@ -13,6 +13,7 @@ name = "pypi"
 
 "boto3" = "*"
 "ruamel.yaml" = "*"
+"docker" = "==3.2.1"
 
 
 [requires]

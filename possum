@@ -4,9 +4,11 @@ import argparse
 import errno
 import hashlib
 import io
+import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -14,20 +16,54 @@ import uuid
 import boto3
 from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError
+import docker
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
-__version__ = '1.2'
+__version__ = '1.3'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
 __copyright__ = 'Copyright 2018 Bryson Tyrrell'
 
 WORKING_DIR = os.getcwd()
+USER_DIR = os.path.expanduser('~')
 POSSUM_PATH = ''
 PIPENV_PATH = shutil.which('pipenv')
 S3_BUCKET_NAME = ''
 S3_ARTIFACT_DIR = ''
+
+logger = logging.getLogger(__name__)
+
+
+class MyFormatter(logging.Formatter):
+    info_format = "%(message)s"
+    error_warn_format = "%(levelname)s: %(message)s"
+
+    def __init__(self):
+        super().__init__(fmt="%(levelno)d: %(msg)s", datefmt=None, style='%')
+
+    def format(self, record):
+        original_format = self._style._fmt
+
+        if record.levelno != logging.INFO:
+            self._style._fmt = MyFormatter.error_warn_format
+
+        elif record.levelno == logging.INFO:
+            self._style._fmt = MyFormatter.info_format
+
+        result = logging.Formatter.format(self, record)
+        self._style._fmt = original_format
+        return result
+
+
+def configure_logger():
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(MyFormatter())
+    stream_handler.setLevel(logging.DEBUG)
+
+    logger.addHandler(stream_handler)
+    logger.setLevel(logging.INFO)
 
 
 def arguments():
@@ -74,6 +110,20 @@ def arguments():
         action='store_true'
     )
 
+    parser.add_argument(
+        '--docker',
+        help='Build Lambda packages within a Docker container environment',
+        action='store_true'
+    )
+
+    parser.add_argument(
+        '--docker-image',
+        help="Specify a Docker image to use (defaults to 'possum:latest'",
+        type=str,
+        default='possum:latest',
+        metavar='image_name'
+    )
+
     return parser.parse_args()
 
 
@@ -83,15 +133,14 @@ def possum_name():
 
 
 def get_possum_path():
-    user_dir = os.path.expanduser('~')
-    possum_dir = os.path.join(user_dir, '.possum')
+    possum_dir = os.path.join(USER_DIR, '.possum')
     if not os.path.exists(possum_dir):
-        print('Creating Possum directory...')
+        logger.info('Creating Possum directory...')
         os.mkdir(possum_dir)
     elif not os.path.isdir(possum_dir):
-        print(f"ERROR: '{possum_dir}' if not a directory! Delete to allow "
-              "Possum to recreate the directory")
-        raise SystemExit
+        logger.error(f"'{possum_dir}' is not a directory! Delete to "
+                     "allow Possum to recreate the directory")
+        sys.exit(1)
 
     return os.path.join(possum_dir, possum_name())
 
@@ -245,28 +294,88 @@ def upload_artifacts(artifact_directory, profile_name=None):
     s3_client = session.resource('s3')
 
     os.chdir(artifact_directory)
-    print(f'Uploading all Lambda build artifacts to: {S3_ARTIFACT_DIR}')
+    logger.info(f'Uploading all Lambda build artifacts to: {S3_ARTIFACT_DIR}')
 
     for artifact in os.listdir('.'):
-        print(f'Uploading artifact: {artifact}')
+        logger.info(f'Uploading artifact: {artifact}')
         try:
             s3_client.Bucket(S3_BUCKET_NAME).upload_file(
                 artifact, os.path.join(S3_ARTIFACT_DIR, artifact))
         except (S3UploadFailedError, ClientError)as err:
-            print('\nERROR: Failed to upload the artifact to the S3 bucket! '
-                  f'Encountered:\n{err}')
-            raise SystemExit
+            logger.error('Failed to upload the artifact to the S3 bucket! '
+                         f'Encountered:\n{err}')
+            sys.exit(1)
+
+
+def run_in_docker(image_name):
+    command = sys.argv
+
+    command[0] = 'possum'
+    command.pop(command.index('--docker'))
+
+    try:
+        command.pop(command.index('--docker-image') + 1)
+        command.pop(command.index('--docker-image'))
+    except ValueError:
+        pass
+
+    docker_directory = tempfile.mkdtemp(suffix='-docker', prefix='possum-', dir='/tmp')
+    logger.info(f'Working Docker directory: {docker_directory}')
+
+    client = docker.from_env()
+
+    logger.info('Running Docker container...')
+    container = client.containers.create(
+        image=image_name,
+        command=command,
+        volumes={
+            os.path.join(USER_DIR, '.aws'): {
+                'bind': '/root/.aws',
+                'mode': 'ro'
+            },
+            os.path.dirname(POSSUM_PATH): {
+                'bind': '/root/.possum',
+                'mode': 'rw'
+            },
+            WORKING_DIR: {
+                'bind': '/task',
+                'mode': 'rw'
+            },
+            docker_directory: {
+                'bind': '/tmp',
+                'mode': 'rw'
+            }
+        },
+        detach=True
+    )
+
+    container.start()
+
+    for event in container.logs(stream=True):
+        print(event.decode().strip())
+        time.sleep(.01)
+
+    container.remove()
 
 
 def main():
     args = arguments()
-
-    if not PIPENV_PATH:
-        print("ERROR: 'pipenv' not found")
-        raise SystemExit
+    configure_logger()
 
     global POSSUM_PATH
     POSSUM_PATH = get_possum_path()
+
+    if args.docker:
+        if not args.docker_image:
+            logging.error('A Docker image must be specified')
+            sys.exit(1)
+
+        run_in_docker(args.docker_image)
+        sys.exit()
+
+    if not PIPENV_PATH:
+        logger.error("'pipenv' not found")
+        sys.exit(1)
 
     global S3_BUCKET_NAME
     S3_BUCKET_NAME = args.s3_bucket
@@ -274,14 +383,13 @@ def main():
     global S3_ARTIFACT_DIR
     S3_ARTIFACT_DIR = f'possum-{int(time.time())}'
 
-    # yaml = YAML()
     try:
         with open(args.template) as fobj:
             template_file = YAML().load(fobj)
     except Exception as error:
-        print('ERROR: Failed to load template file! Encountered: '
-              f'{type(error).__name__}\n')
-        raise SystemExit
+        logger.error('Failed to load template file! Encountered: '
+                     f'{type(error).__name__}\n')
+        sys.exit(1)
 
     lambda_functions = dict()
 
@@ -292,29 +400,29 @@ def main():
                 template_file['Resources'][resource]['Properties']['Runtime']
 
             if not runtime.lower().startswith('python'):
-                print('\nWARNING: Possum only packages Python based Lambda '
-                      f'functions! Found runtime "{runtime}" for function '
-                      f'"{resource}" This Lambda function will be skipped. You '
-                      'will need to package this function separately before '
-                      'deploying.\n')
+                logger.warning('Possum only packages Python based Lambda '
+                               f' functions! Found runtime "{runtime}" for  '
+                               f'function "{resource}" This Lambda function '
+                               'will be skipped. You will need to package this '
+                               'function separately before deploying.')
                 continue
 
             else:
                 lambda_functions[resource] = \
                     template_file['Resources'][resource]
 
-    print("\nThe following functions will be packaged and deployed:")
+    logger.info("\nThe following functions will be packaged and deployed:")
     for func in lambda_functions.keys():
-        print(f"  - {func}")
+        logger.info(f"  - {func}")
 
     try:
         possum_file = PossumFile()
     except scanner.ScannerError:
-        print(f"\nERROR: The Possum file '{POSSUM_PATH}' is invalid!")
-        raise SystemExit
+        logger.error(f"The Possum file '{POSSUM_PATH}' is invalid!")
+        sys.exit(1)
 
     build_directory = tempfile.mkdtemp(suffix='-build', prefix='possum-')
-    print(f'\nBuild directory: {build_directory}\n')
+    logger.info(f'\nBuild directory: {build_directory}\n')
 
     build_artifact_directory = os.path.join(build_directory, 's3_artifacts')
     os.mkdir(build_artifact_directory)
@@ -328,8 +436,8 @@ def main():
         if possum_file.check_hash(func, func_source_dir) and not args.clean:
             last_s3_uri = possum_file.get_last_s3_uri(func)
             if last_s3_uri:
-                print(f'{func}: No changes detected')
-                print(f'{func}: Using S3 artifact: {last_s3_uri}\n')
+                logger.info(f'{func}: No changes detected')
+                logger.info(f'{func}: Using S3 artifact: {last_s3_uri}\n')
                 update_template_function(
                     template_file,
                     func,
@@ -338,30 +446,33 @@ def main():
 
         shutil.copytree(func_source_dir, func_build_dir)
         os.chdir(func_build_dir)
-        print(f'{func}: Working dir: {func_build_dir}')
+        logger.info(f'{func}: Working dir: {func_build_dir}')
 
         requirements_files = ('Pipfile', 'Pipfile.lock', 'requirements.txt')
         if [i for i in os.listdir('.') if i in requirements_files]:
-            print(f'{func}: Creating virtual environment...')
+            logger.info(f'{func}: Creating virtual environment...')
             create_virtual_environment()
 
             venv_path = get_virtual_environment_path()
 
-            print(f'{func}: Virtual environment created at {venv_path}')
+            logger.info(f'{func}: Virtual environment created at {venv_path}')
 
             do_not_copy = get_existing_site_packages(venv_path)
 
-            print(f'{func}: Installing requirements...')
+            logger.info(f'{func}: Installing requirements...')
             install_packages()
 
-            print(f'{func}: Copying installed packages...')
+            logger.info(f'{func}: Copying installed packages...')
             copy_installed_packages(venv_path, do_not_copy)
 
-            print(f'{func}: Removing Lambda build virtual environment...')
+            logger.info(f'{func}: Removing Lambda build virtual environment...')
             remove_virtualenv()
 
-        print(f'{func}: Creating Lambda function Zip archive...')
-        artifact = create_deployment_package(func_build_dir, build_artifact_directory)
+        logger.info(f'{func}: Creating Lambda function Zip archive...')
+
+        artifact = create_deployment_package(
+            func_build_dir, build_artifact_directory)
+
         update_template_function(
             template_file,
             func,
@@ -369,14 +480,14 @@ def main():
         )
         possum_file.set_s3_uri(
             func, template_file['Resources'][func]['Properties']['CodeUri'])
-        print('')
+        logger.info('')
 
     upload_artifacts(
         build_artifact_directory,
         args.profile
     )
 
-    print('\nRemoving build directory...')
+    logger.info('\nRemoving build directory...')
     shutil.rmtree(build_directory)
 
     stream = io.StringIO()
@@ -384,10 +495,11 @@ def main():
     deployment_template = stream.getvalue()
 
     if not args.output_template:
-        print('\nUpdated SAM deployment template:\n')
+        logger.info('\nUpdated SAM deployment template:\n')
         print(deployment_template)
     else:
-        print(f"Writing deployment template to '{args.output_template}'...\n")
+        logger.info("Writing deployment template to "
+                    f"'{args.output_template}'...\n")
         with open(os.path.join(WORKING_DIR, args.output_template),
                   'wt') as fobj:
             fobj.write(deployment_template)
