@@ -17,7 +17,7 @@ import boto3
 from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError
 import docker
-from docker.errors import APIError
+from docker.errors import APIError, ImageNotFound
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
@@ -326,29 +326,34 @@ def run_in_docker(image_name):
     client = docker.from_env()
 
     logger.info('Running Docker container...')
-    container = client.containers.create(
-        image=image_name,
-        command=command,
-        volumes={
-            os.path.join(USER_DIR, '.aws'): {
-                'bind': '/root/.aws',
-                'mode': 'ro'
+
+    try:
+        container = client.containers.create(
+            image=image_name,
+            command=command,
+            volumes={
+                os.path.join(USER_DIR, '.aws'): {
+                    'bind': '/root/.aws',
+                    'mode': 'ro'
+                },
+                os.path.dirname(POSSUM_PATH): {
+                    'bind': '/root/.possum',
+                    'mode': 'rw'
+                },
+                WORKING_DIR: {
+                    'bind': '/task',
+                    'mode': 'rw'
+                },
+                docker_directory: {
+                    'bind': '/tmp',
+                    'mode': 'rw'
+                }
             },
-            os.path.dirname(POSSUM_PATH): {
-                'bind': '/root/.possum',
-                'mode': 'rw'
-            },
-            WORKING_DIR: {
-                'bind': '/task',
-                'mode': 'rw'
-            },
-            docker_directory: {
-                'bind': '/tmp',
-                'mode': 'rw'
-            }
-        },
-        detach=True
-    )
+            detach=True
+        )
+    except ImageNotFound:
+        logger.error(f"The Docker image '{image_name}' could not be found")
+        sys.exit(1)
 
     try:
         container.start()
