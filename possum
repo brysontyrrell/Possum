@@ -325,12 +325,25 @@ def run_in_docker(image_name):
 
     client = docker.from_env()
 
+    # Copy invocation environment parameters into Docker for use-cases where
+    # AWS credentials are not available via the ~/.aws directory.
+    container_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k in [
+            'AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_SESSION_TOKEN',
+        ]
+    }
+
     logger.info('Running Docker container...')
 
     try:
         container = client.containers.create(
             image=image_name,
             command=command,
+            environment=container_env,
             volumes={
                 os.path.join(USER_DIR, '.aws'): {
                     'bind': '/root/.aws',
