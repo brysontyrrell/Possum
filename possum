@@ -282,12 +282,12 @@ def remove_virtualenv():
     p.communicate()
 
 
-def update_template_function(template, resource, s3_object=None, s3_uri=None):
+def update_template_resource(template, resource, resource_param='CodeUri',
+                             s3_object=None, s3_uri=None):
     if s3_object:
-        template['Resources'][resource]['Properties']['CodeUri'] = \
-            f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
-    elif s3_uri:
-        template['Resources'][resource]['Properties']['CodeUri'] = s3_uri
+        s3_uri = f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
+
+    template['Resources'][resource]['Properties'][resource_param] = s3_uri
 
 
 def upload_artifacts(artifact_directory, profile_name=None):
@@ -461,7 +461,7 @@ def main():
             if last_s3_uri:
                 logger.info(f'{func}: No changes detected')
                 logger.info(f'{func}: Using S3 artifact: {last_s3_uri}\n')
-                update_template_function(
+                update_template_resource(
                     template_file,
                     func,
                     s3_uri=last_s3_uri)
@@ -496,7 +496,7 @@ def main():
         artifact = create_deployment_package(
             func_build_dir, build_artifact_directory)
 
-        update_template_function(
+        update_template_resource(
             template_file,
             func,
             s3_object=artifact
