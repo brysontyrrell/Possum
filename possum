@@ -414,6 +414,7 @@ def main():
                      f'{type(error).__name__}\n')
         sys.exit(1)
 
+    api_resources = dict()
     lambda_functions = dict()
 
     for resource in template_file['Resources']:
@@ -436,9 +437,24 @@ def main():
                 lambda_functions[resource] = \
                     template_file['Resources'][resource]
 
+        elif template_file['Resources'][resource]['Type'] == \
+                'AWS::Serverless::Api':
+            # Server::Api resource. If it has a 'DefinitionUri' parameter
+            # that DOES NOT start with s3://, this swagger file must be
+            # shipped and the template updated.
+            if 'DefinitionUri' in \
+                    template_file['Resources'][resource]['Properties'] \
+                    and \
+                    not template_file['Resources'][resource]['Properties']['DefinitionUri'].startswith('s3://'):
+                api_resources[resource] = template_file['Resources'][resource]
+
     logger.info("\nThe following functions will be packaged and deployed:")
     for func in lambda_functions.keys():
         logger.info(f"  - {func}")
+
+    logger.info("\nThe following swagger files will be deployed:")
+    for api in api_resources.keys():
+        logger.info(f"  - {api}")
 
     try:
         possum_file = PossumFile()
@@ -451,6 +467,18 @@ def main():
 
     build_artifact_directory = os.path.join(build_directory, 's3_artifacts')
     os.mkdir(build_artifact_directory)
+
+    for logical_id, api_resource in api_resources.items():
+        swagger_src = os.path.join(
+            WORKING_DIR, api_resource['Properties']['DefinitionUri'])
+        swagger_dst = os.path.join(build_artifact_directory, f'{logical_id}.swagger')
+        shutil.copyfile(swagger_src, swagger_dst)
+
+        update_template_resource(
+            template_file,
+            logical_id,
+            s3_object=os.path.basename(swagger_dst),
+            resource_param='DefinitionUri')
 
     for func, values in lambda_functions.items():
         func_source_dir = os.path.join(
