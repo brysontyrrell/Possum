@@ -420,7 +420,9 @@ def main():
         if template_file['Resources'][resource]['Type'] == \
                 'AWS::Serverless::Function':
             runtime = \
-                template_file['Resources'][resource]['Properties']['Runtime']
+                    template_file['Resources'][resource]['Properties'].get(
+                        'Runtime',
+                        template_file['Globals']['Function']['Runtime'])
 
             if not runtime.lower().startswith('python'):
                 logger.warning('Possum only packages Python based Lambda '
