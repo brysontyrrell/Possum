@@ -21,7 +21,7 @@ from docker.errors import APIError, ImageNotFound
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
-__version__ = '1.3'
+__version__ = '1.4'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
@@ -282,12 +282,12 @@ def remove_virtualenv():
     p.communicate()
 
 
-def update_template_function(template, resource, s3_object=None, s3_uri=None):
+def update_template_resource(template, resource, resource_param='CodeUri',
+                             s3_object=None, s3_uri=None):
     if s3_object:
-        template['Resources'][resource]['Properties']['CodeUri'] = \
-            f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
-    elif s3_uri:
-        template['Resources'][resource]['Properties']['CodeUri'] = s3_uri
+        s3_uri = f's3://{S3_BUCKET_NAME}/{S3_ARTIFACT_DIR}/{s3_object}'
+
+    template['Resources'][resource]['Properties'][resource_param] = s3_uri
 
 
 def upload_artifacts(artifact_directory, profile_name=None):
@@ -325,12 +325,25 @@ def run_in_docker(image_name):
 
     client = docker.from_env()
 
+    # Copy invocation environment parameters into Docker for use-cases where
+    # AWS credentials are not available via the ~/.aws directory.
+    container_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k in [
+            'AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_SESSION_TOKEN',
+        ]
+    }
+
     logger.info('Running Docker container...')
 
     try:
         container = client.containers.create(
             image=image_name,
             command=command,
+            environment=container_env,
             volumes={
                 os.path.join(USER_DIR, '.aws'): {
                     'bind': '/root/.aws',
@@ -401,13 +414,16 @@ def main():
                      f'{type(error).__name__}\n')
         sys.exit(1)
 
+    api_resources = dict()
     lambda_functions = dict()
 
     for resource in template_file['Resources']:
         if template_file['Resources'][resource]['Type'] == \
                 'AWS::Serverless::Function':
             runtime = \
-                template_file['Resources'][resource]['Properties']['Runtime']
+                    template_file['Resources'][resource]['Properties'].get(
+                        'Runtime',
+                        template_file['Globals']['Function']['Runtime'])
 
             if not runtime.lower().startswith('python'):
                 logger.warning('Possum only packages Python based Lambda '
@@ -421,9 +437,24 @@ def main():
                 lambda_functions[resource] = \
                     template_file['Resources'][resource]
 
+        elif template_file['Resources'][resource]['Type'] == \
+                'AWS::Serverless::Api':
+            # Server::Api resource. If it has a 'DefinitionUri' parameter
+            # that DOES NOT start with s3://, this swagger file must be
+            # shipped and the template updated.
+            if 'DefinitionUri' in \
+                    template_file['Resources'][resource]['Properties'] \
+                    and \
+                    not template_file['Resources'][resource]['Properties']['DefinitionUri'].startswith('s3://'):
+                api_resources[resource] = template_file['Resources'][resource]
+
     logger.info("\nThe following functions will be packaged and deployed:")
     for func in lambda_functions.keys():
         logger.info(f"  - {func}")
+
+    logger.info("\nThe following swagger files will be deployed:")
+    for api in api_resources.keys():
+        logger.info(f"  - {api}")
 
     try:
         possum_file = PossumFile()
@@ -437,6 +468,18 @@ def main():
     build_artifact_directory = os.path.join(build_directory, 's3_artifacts')
     os.mkdir(build_artifact_directory)
 
+    for logical_id, api_resource in api_resources.items():
+        swagger_src = os.path.join(
+            WORKING_DIR, api_resource['Properties']['DefinitionUri'])
+        swagger_dst = os.path.join(build_artifact_directory, f'{logical_id}.swagger')
+        shutil.copyfile(swagger_src, swagger_dst)
+
+        update_template_resource(
+            template_file,
+            logical_id,
+            s3_object=os.path.basename(swagger_dst),
+            resource_param='DefinitionUri')
+
     for func, values in lambda_functions.items():
         func_source_dir = os.path.join(
             WORKING_DIR, values['Properties']['CodeUri'])
@@ -448,7 +491,7 @@ def main():
             if last_s3_uri:
                 logger.info(f'{func}: No changes detected')
                 logger.info(f'{func}: Using S3 artifact: {last_s3_uri}\n')
-                update_template_function(
+                update_template_resource(
                     template_file,
                     func,
                     s3_uri=last_s3_uri)
@@ -483,7 +526,7 @@ def main():
         artifact = create_deployment_package(
             func_build_dir, build_artifact_directory)
 
-        update_template_function(
+        update_template_resource(
             template_file,
             func,
             s3_object=artifact
