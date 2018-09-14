@@ -15,13 +15,13 @@ import uuid
 
 import boto3
 from boto3.exceptions import S3UploadFailedError
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
 import docker
 from docker.errors import APIError, ImageNotFound
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
-__version__ = '1.4'
+__version__ = '1.4.1'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
@@ -302,6 +302,10 @@ def upload_artifacts(artifact_directory, profile_name=None):
         try:
             s3_client.Bucket(S3_BUCKET_NAME).upload_file(
                 artifact, os.path.join(S3_ARTIFACT_DIR, artifact))
+        except NoCredentialsError:
+            logger.error('Unable to upload artifacts to the S3 bucket. Boto3 '
+                         'was unable to locate credentials!')
+            sys.exit(1)
         except (S3UploadFailedError, ClientError)as err:
             logger.error('Failed to upload the artifact to the S3 bucket! '
                          f'Encountered:\n{err}')
@@ -375,10 +379,29 @@ def run_in_docker(image_name):
         sys.exit(1)
 
     for event in container.logs(stream=True):
-        print(event.decode().strip())
+        logger.info(event.decode().strip())
         time.sleep(.01)
 
     container.remove()
+
+
+def get_global(template, resource_type, key):
+    """Return a value from the Globals section of a SAM template.
+
+    :param template: The template object
+    :param resource_type: The resource type being referenced from the Globals section
+    :param key: The key under the resource to return a value from
+    """
+
+    template_globals = template.get('Globals')
+    if not template_globals:
+        return None
+
+    resource = template_globals.get(resource_type)
+    if not resource:
+        return None
+
+    return resource.get(key)
 
 
 def main():
@@ -423,7 +446,8 @@ def main():
             runtime = \
                     template_file['Resources'][resource]['Properties'].get(
                         'Runtime',
-                        template_file['Globals']['Function']['Runtime'])
+                        get_global(template_file, 'Function', 'Runtime')
+                    )
 
             if not runtime.lower().startswith('python'):
                 logger.warning('Possum only packages Python based Lambda '
@@ -471,7 +495,12 @@ def main():
     for logical_id, api_resource in api_resources.items():
         swagger_src = os.path.join(
             WORKING_DIR, api_resource['Properties']['DefinitionUri'])
-        swagger_dst = os.path.join(build_artifact_directory, f'{logical_id}.swagger')
+
+        swagger_dst = os.path.join(
+            build_artifact_directory,
+            f'{logical_id}.swagger'
+        )
+
         shutil.copyfile(swagger_src, swagger_dst)
 
         update_template_resource(
