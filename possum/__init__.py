@@ -21,7 +21,7 @@ from docker.errors import APIError, ImageNotFound
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
-__version__ = '1.4.1'
+__version__ = '1.4.2'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
@@ -123,6 +123,13 @@ def arguments():
         type=str,
         default='possum:latest',
         metavar='image_name'
+    )
+
+    parser.add_argument(
+        '-v', '--version',
+        help='Display version information',
+        action='version',
+        version=f'Possum {__version__}'
     )
 
     return parser.parse_args()
@@ -413,7 +420,7 @@ def main():
 
     if args.docker:
         if not args.docker_image:
-            logging.error('A Docker image must be specified')
+            logger.error('A Docker image must be specified')
             sys.exit(1)
 
         run_in_docker(args.docker_image)
@@ -587,7 +594,3 @@ def main():
             fobj.write(deployment_template)
 
     possum_file.save()
-
-
-if __name__ == '__main__':
-    main()
