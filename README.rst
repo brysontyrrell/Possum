@@ -63,6 +63,17 @@ can specify the template's name with the ``-t/--template`` argument:
 
 The generated deployment template will printed on the screen.
 
+By default, Possum will upload *new* artifacts to a directory in your chosen S3
+bucket named ``possum-0123456789`` where the numerical value is the current
+timestamp.
+
+If you wish to override this default and specify the directory path to upload
+new artifact, append it to the S3 bucket name using forward slashes:
+
+::
+
+    $ possum '<s3-bucket-name>/<my_path>'
+
 You can also specify the deployment template be written to a file by
 passing a name to the ``-o/--output-template`` argument:
 
@@ -84,30 +95,32 @@ You can view the options and instructions for using Possum with the
 
     $ possum -h
     usage: possum [-h] [-t template] [-o output] [-p profile_name] [-c] [--docker]
-              [--docker-image image_name]
+              [--docker-image image_name] [-v]
               s3_bucket
 
-    Possum is a utility to package and deploy Python-based serverless applications
-    using the Amazon Serverless Application model with per-function dependencies
-    using Pipfiles.
+    Possum is a utility to package Python-based serverless applications using the
+    Amazon Serverless Application model with per-function dependencies.
 
     positional arguments:
-      s3_bucket             The S3 bucket to upload artifacts
+      s3_bucket             The S3 bucket to upload artifacts. You may optionally
+                            pass a path within the bucket to store the Lambda
+                            artifacts (defaults to 'possum-{timestamp}').
 
     optional arguments:
       -h, --help            show this help message and exit
       -t template, --template template
-                            The filename of the SAM template
+                            The filename of the SAM template.
       -o output, --output-template output
-                            Optional filename for the output template
+                            Optional filename for the output template.
       -p profile_name, --profile profile_name
-                            Optional profile name for AWS credentials
-      -c, --clean           Build all Lambda packages, ignoring previous run
+                            Optional profile name for AWS credentials.
+      -c, --clean           Build all Lambda packages, ignoring previous run.
       --docker              Build Lambda packages within a Docker container
-                            environment
+                            environment.
       --docker-image image_name
                             Specify a Docker image to use (defaults to
-                            'possum:latest'
+                            'possum:latest').
+      -v, --version         Display version information.
 
 Docker Support
 --------------
