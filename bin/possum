@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+
+import sys
+
+from possum import main
+
+
+if __name__ == '__main__':
+    try:
+        assert sys.version_info >= (3, 6)
+    except AssertionError:
+        print('Possum required Python 3.6 or higher')
+        sys.exit(1)
+
+    main()
