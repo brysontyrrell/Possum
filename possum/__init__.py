@@ -21,7 +21,7 @@ from docker.errors import APIError, ImageNotFound
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
-__version__ = '1.4.2'
+__version__ = '1.4.3'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
@@ -38,6 +38,17 @@ logger = logging.getLogger(__name__)
 
 
 class MyFormatter(logging.Formatter):
+    """This is a custom formatter for the logger to write INFO level messages
+    without showing the level. All other levels display the level.
+
+    Example output::
+
+        >>> logger.info('A message')
+        'A message'
+        >>> logger.error('A message')
+        'ERROR: A Message'
+
+    """
     info_format = "%(message)s"
     error_warn_format = "%(levelname)s: %(message)s"
 
@@ -59,6 +70,7 @@ class MyFormatter(logging.Formatter):
 
 
 def configure_logger():
+    """Configure the logger. For use when invoked as a CLI tool."""
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(MyFormatter())
     stream_handler.setLevel(logging.DEBUG)
@@ -68,24 +80,30 @@ def configure_logger():
 
 
 def arguments():
+    """Parse command line arguments when invoked as a CLI tool.
+
+    :returns: Parsed arguments
+    :rtype: argparse.Namespace
+    """
     parser = argparse.ArgumentParser(
         'possum',
-        description='Possum is a utility to package and deploy Python-based '
-                    'serverless applications using the Amazon Serverless '
-                    'Application model with per-function dependencies using '
-                    'Pipfiles.'
+        description='Possum is a utility to package Python-based serverless '
+                    'applications using the Amazon Serverless Application '
+                    'model with per-function dependencies.'
     )
 
     parser.add_argument(
         's3_bucket',
-        help='The S3 bucket to upload artifacts',
+        help="The S3 bucket to upload artifacts. You may optionally pass a "
+             "path within the bucket to store the Lambda artifacts (defaults "
+             "to 'possum-{timestamp}').",
         type=str,
         metavar='s3_bucket'
     )
 
     parser.add_argument(
         '-t', '--template',
-        help='The filename of the SAM template',
+        help='The filename of the SAM template.',
         type=str,
         default='template.yaml',
         metavar='template'
@@ -93,33 +111,33 @@ def arguments():
 
     parser.add_argument(
         '-o', '--output-template',
-        help='Optional filename for the output template',
+        help='Optional filename for the output template.',
         type=str,
         metavar='output'
     )
 
     parser.add_argument(
         '-p', '--profile',
-        help='Optional profile name for AWS credentials',
+        help='Optional profile name for AWS credentials.',
         type=str,
         metavar='profile_name'
     )
 
     parser.add_argument(
         '-c', '--clean',
-        help='Build all Lambda packages, ignoring previous run',
+        help='Build all Lambda packages, ignoring previous run.',
         action='store_true'
     )
 
     parser.add_argument(
         '--docker',
-        help='Build Lambda packages within a Docker container environment',
+        help='Build Lambda packages within a Docker container environment.',
         action='store_true'
     )
 
     parser.add_argument(
         '--docker-image',
-        help="Specify a Docker image to use (defaults to 'possum:latest'",
+        help="Specify a Docker image to use (defaults to 'possum:latest').",
         type=str,
         default='possum:latest',
         metavar='image_name'
@@ -127,7 +145,7 @@ def arguments():
 
     parser.add_argument(
         '-v', '--version',
-        help='Display version information',
+        help='Display version information.',
         action='version',
         version=f'Possum {__version__}'
     )
@@ -154,6 +172,13 @@ def get_possum_path():
 
 
 def hash_directory(path):
+    """Recursively hashes the contents of a directory and returns the hex value.
+
+    :param path: The path to the directory
+
+    :return: SHA1 hash
+    :rtype: str
+    """
     dir_hash = hashlib.sha1()
 
     for root, dirs, files in os.walk(path):
@@ -392,6 +417,27 @@ def run_in_docker(image_name):
     container.remove()
 
 
+def get_s3_bucket_and_dir(bucket_arg):
+    """Return the name of the S3 bucket and path to upload Lambda artifacts
+    to. If no additional path is provided a default value will be used.
+
+    Bucket Only: ``my-bucket``
+    Bucket with Path: ``my-bucket/my-path``
+
+    :param str bucket_arg: The string passed for the ``s3_bucket`` argument.
+
+    :returns Tuple containing the bucket name and path
+    :rtype: tuple
+    """
+    try:
+        bucket, dir_ = bucket_arg.split('/', 1)
+    except ValueError:
+        bucket = bucket_arg
+        dir_ = f'possum-{int(time.time())}'
+
+    return bucket, dir_
+
+
 def get_global(template, resource_type, key):
     """Return a value from the Globals section of a SAM template.
 
@@ -431,10 +477,9 @@ def main():
         sys.exit(1)
 
     global S3_BUCKET_NAME
-    S3_BUCKET_NAME = args.s3_bucket
-
     global S3_ARTIFACT_DIR
-    S3_ARTIFACT_DIR = f'possum-{int(time.time())}'
+
+    S3_BUCKET_NAME, S3_ARTIFACT_DIR = get_s3_bucket_and_dir(args.s3_bucket)
 
     try:
         with open(args.template) as fobj:
