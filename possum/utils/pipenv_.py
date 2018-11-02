@@ -50,3 +50,16 @@ class PipenvWrapper:
             stderr=subprocess.DEVNULL
         )
         p.communicate()
+
+    def check_package_title(self, package):
+        try:
+            # Yes, this needs to be better, but performing this one-liner
+            # though the Pipenv environment of the project only seems to work
+            # when 'shell=True' is set.
+            return subprocess.check_output(
+                f'{self.pipenv_path} run python -c "import '
+                f'{package}; print({package}.__title__)"',
+                shell=True, universal_newlines=True
+            ).strip()
+        except subprocess.CalledProcessError:
+            return package

@@ -10,18 +10,20 @@ from ruamel.yaml import scanner, YAML
 from possum import __version__
 from possum.config import logger, configure_logger
 from possum.exc import PipenvPathNotFound
-from possum.utils import (
-    build_docker_image,
+from possum.packages import (
     copy_installed_packages,
     create_lambda_package,
     get_existing_site_packages,
-    get_global,
+    upload_packages
+)
+from possum.reqs import get_pipfile_packages, get_imports, generate_requirements
+from possum.template import get_global, update_template_resource, SAMTemplate
+from possum.utils import (
+    build_docker_image,
     get_s3_bucket_and_dir,
     run_in_docker,
-    upload_packages,
-    update_template_resource,
     PipenvWrapper,
-    PossumFile
+    PossumFile,
 )
 
 WORKING_DIR = os.getcwd()
@@ -115,11 +117,62 @@ def arguments():
         metavar='image_name'
     )
 
+    gen_reqs_parser = subparsers.add_parser(
+        'generate-requirements',
+        help="Generate 'requirements.txt' files for each Lambda function from "
+             "the project's Pipfile (BETA)."
+    )
+    gen_reqs_parser.set_defaults(func=gen_reqs)
+
+    gen_reqs_parser.add_argument(
+        '-t', '--template',
+        help='The filename of the SAM template.',
+        default='template.yaml',
+        metavar='template'
+    )
+
+    docker_image_parser = subparsers.add_parser(
+        'build-docker-image',
+        help="Build the default 'possum' Docker image to run build jobs within."
     )
     docker_image_parser.set_defaults(func=docker_image)
 
     return parser.parse_args()
 
+
+def gen_reqs(args):
+    if not os.path.exists(os.path.join(WORKING_DIR, 'Pipfile')) and \
+            os.path.exists(os.path.join(WORKING_DIR, 'Pipfile.lock')):
+        logger.error(
+            "This feature requires a root level 'Pipfile' and 'Pipfile.lock'")
+        sys.exit(1)
+
+    template = SAMTemplate(args.template)
+
+    pipfile_packages = get_pipfile_packages()
+
+    logger.info('Evaluating Lambda function dependencies...\n')
+    for k, v in template.lambda_resources.items():
+        handler_file = template.get_lambda_handler(k)
+        if not handler_file:
+            logger.error(f"{k}: There was no 'Handler' found for the Lambda "
+                         f"function and it is being skipped!\n")
+            continue
+
+        lambda_code_dir = v['Properties']['CodeUri']
+
+        imports = get_imports(
+            os.path.join(WORKING_DIR, lambda_code_dir, handler_file))
+
+        requirements = generate_requirements(
+            pipfile_packages, imports, lambda_code_dir)
+
+        if requirements:
+            logger.info(f"{k}: A requirements.txt file has been generated with "
+                        "the following packages:")
+            logger.info(f"{k}: {', '.join(requirements)}\n")
+        else:
+            logger.info(f"{k}: No requirements.txt file generated\n")
 
 
 def docker_image(args):

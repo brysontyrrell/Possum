@@ -31,75 +31,46 @@ Possum aims to serve as a replacement to the basic package functions.
 The tool is based upon my approach to serverless AWS applications
 (opinionated) and may not be a fit for all parties.
 
-AWS Credentials
----------------
-
-Possum uses the Boto3 SDK for uploading artifacts to S3. You can set your
-AWS access and secret keys in your environment variables as described in
-the Boto3 documentation. Possom also accept a profile name for your AWS
-credentials file via the ``-p/--profile`` argument.
-
-::
-
-    $ possum '<s3-bucket-name>' --profile '<my-profile-name>'
-
 Basic Usage
 -----------
 
-Run Possum from the repository directory containing the serverless
-application.
-
-::
-
-    $ possum '<s3-bucket-name>'
-
-The above command will package the Python Lambda functions and upload
-them to S3 assuming the template file is named ``template.yaml``. You
-can specify the template's name with the ``-t/--template`` argument:
-
-::
-
-    $ possum '<s3-bucket-name>' -t my-template.yml
-
-The generated deployment template will printed on the screen.
-
-By default, Possum will upload *new* artifacts to a directory in your chosen S3
-bucket named ``possum-0123456789`` where the numerical value is the current
-timestamp.
-
-If you wish to override this default and specify the directory path to upload
-new artifact, append it to the S3 bucket name using forward slashes:
-
-::
-
-    $ possum '<s3-bucket-name>/<my_path>'
-
-You can also specify the deployment template be written to a file by
-passing a name to the ``-o/--output-template`` argument:
-
-::
-
-    $ possum '<s3-bucket-name>' -o deployment.yaml
-
-Possum uses hashes of your function directories to determine if changes have
-occurred since the last run of the command. Hashes and S3 URIs are saved in a
-``~/.possum`` directory for each project you package with Possum.
-
-To force Possum to build all functions and skip the hash check, use the
-``-c/--clean`` argument.
-
-You can view the options and instructions for using Possum with the
-``-h`` argument:
+Run Possum from the repository directory containing the serverless application.
+You can view the available options and commands for Possum with the ``-h``
+argument:
 
 ::
 
     $ possum -h
-    usage: possum [-h] [-t template] [-o output] [-p profile_name] [-c] [--docker]
-              [--docker-image image_name] [-v]
-              s3_bucket
+    usage: possum [-h] [-v] {package,generate-requirements,build-docker-image} ...
 
-    Possum is a utility to package Python-based serverless applications using the
-    Amazon Serverless Application model with per-function dependencies.
+    Possum is a utility to package Python-based serverless applications using
+    the Amazon Serverless Application model with per-function dependencies.
+
+    Global Options:
+      -h, --help            show this help message and exit
+      -v, --version         Display version information.
+
+    Commands:
+        package             Package the Serverless application, upload to S3, and
+                            generate a deployment template file.
+        generate-requirements
+                            Generate 'requirements.txt' files for each Lambda
+                            function from the project's Pipfile (BETA).
+        build-docker-image  Build the default 'possum' Docker image to run build
+                            jobs within.
+
+The ``package`` Command
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Build Lambda packages, upload to S3, and generate a deployment tamplate from
+your source template.
+
+::
+
+    $ possum package -h
+    usage: possum package [-h] [-t template] [-o output] [-p profile_name] [-c]
+                          [--docker] [--docker-image image_name]
+                          s3_bucket
 
     positional arguments:
       s3_bucket             The S3 bucket to upload artifacts. You may optionally
@@ -120,15 +91,133 @@ You can view the options and instructions for using Possum with the
       --docker-image image_name
                             Specify a Docker image to use (defaults to
                             'possum:latest').
-      -v, --version         Display version information.
+
+
+::
+
+    $ possum package '<s3-bucket-name>'
+
+The above command will package the Python Lambda functions and upload
+them to S3 assuming the template file is named ``template.yaml``. You
+can specify the template's name with the ``-t/--template`` argument:
+
+::
+
+    $ possum package '<s3-bucket-name>' -t my-template.yml
+
+The generated deployment template will printed on the screen.
+
+By default, Possum will upload *new* artifacts to a directory in your chosen S3
+bucket named ``possum-0123456789`` where the numerical value is the current
+timestamp.
+
+If you wish to override this default and specify the directory path to upload
+new artifact, append it to the S3 bucket name using forward slashes:
+
+::
+
+    $ possum package '<s3-bucket-name>/<my_path>'
+
+You can also specify the deployment template be written to a file by
+passing a name to the ``-o/--output-template`` argument:
+
+::
+
+    $ possum package '<s3-bucket-name>' -o deployment.yaml
+
+Possum uses hashes of your function directories to determine if changes have
+occurred since the last run of the command. Hashes and S3 URIs are saved in a
+``~/.possum`` directory for each project you package with Possum.
+
+To force Possum to build all functions and skip the hash check, use the
+``-c/--clean`` argument.
+
+The ``generate-requirements`` Command (BETA)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+An experimental option for generating and maintaining ``requirements.txt`` files
+for each Lambda function in the template based upon the project's root Pipfile.
+
+::
+
+    $ possum generate-requirements -h
+    usage: possum generate-requirements [-h] [-t template]
+
+    optional arguments:
+      -h, --help            show this help message and exit
+      -t template, --template template
+                            The filename of the SAM template.
+
+This command attempts to determine required packages by parsing ``import``
+statements from the Lambda handler file for the function as defined within the
+template.
+
+::
+
+    $ possum generate-requirements
+    Evaluating Lambda function dependencies...
+
+    WebLambda: A requirements.txt file has been generated with the following packages:
+    WebLambda: jinja2==2.10
+
+    ApiLambda: A requirements.txt file has been generated with the following packages:
+    ApiLambda: cryptography==2.2.2, jsonschema==2.6.0
+
+    SimpleLambda: No requirements.txt file generated
+
+    OtherLambda: A requirements.txt file has been generated with the following packages:
+    OtherLambda: git+https://github.com/brysontyrrell/MyPackage.git#egg=mypackage
+
+This functionality is experimental and subject to change.
+
+AWS Credentials
+---------------
+
+Possum uses the Boto3 SDK for uploading artifacts to S3. You can set your
+AWS access and secret keys in your environment variables as described in
+the Boto3 documentation. Possom also accepts a profile name for your AWS
+credentials file via the ``-p/--profile`` argument.
+
+::
+
+    $ possum package '<s3-bucket-name>' --profile '<my-profile-name>'
 
 Docker Support
 --------------
 
 The installation of some Python packages differ based on the underlying system
-(cryptography.io is an example). To ensure your installed dependencies are
+(``cryptography`` is one example). To ensure your installed dependencies are
 fully compatible with the Lambda environment, you may opt to run Possum within
 a Docker container.
+
+The ``build-docker-image`` Command
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can use Possum to build a basic Docker image with the default
+``possum:latest`` tag used by the ``--docker-image`` argument:
+
+::
+
+    $ possum build-docker-image -h
+    usage: possum build-docker-image [-h]
+
+    optional arguments:
+      -h, --help  show this help message and exit
+
+This image is based upon the included Dockerfile, but will install Possom from
+PyPI instead of using the local source.
+
+::
+
+    $ possum build-docker-image
+    Building 'possum:1.5.0' Docker image (this may take several minutes)...
+    Tagging as 'latest'...
+    Image successfully created:
+      ID: dd8bec4aae
+      Tags: possum:1.5.0, possum:latest
+
+Dockerfile
+^^^^^^^^^^
 
 The included ``Dockerfile`` in this project will create a compatible default
 image to use. Run the following command from the same directory as the
@@ -142,11 +231,14 @@ This image is based upon ``lambci/lambda:build-python3.6``. You may build your
 own custom image and specify it using the ``--docker-image`` argument. If you
 decide to use your own image it must have ``pipenv`` and ``possum`` installed!
 
+Run in Docker
+^^^^^^^^^^^^^
+
 Launch Possum in a container using the ``--docker`` argument:
 
 ::
 
-    $ possum '<s3-bucket-name>' --docker
+    $ possum package '<s3-bucket-name>' --docker
 
 Serverless App Repository Example
 ---------------------------------
@@ -158,17 +250,16 @@ functions in a single repository:
 
     my_prjoect/
         |
-        |___template.yaml
+        |__ template.yaml
         |
-        |___function1/
+        |__ function1/
         |   |
-        |   |___function1.py
+        |   |__ function1.py
         |
-        |___function2/
+        |__ function2/
             |
-            |___function2.py
-            |___Pipfile
-            |___Pipfile.lock
+            |__ function2.py
+            |__ requirements.txt
 
 For each AWS Lambda function defined in the template, Possum references
 the ``Properties:CodeUri`` key for the path to the function's directory.
