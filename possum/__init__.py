@@ -21,7 +21,7 @@ from docker.errors import APIError, ImageNotFound
 from ruamel.yaml import scanner, YAML
 
 __title__ = 'possum'
-__version__ = '1.4.3'
+__version__ = '1.4.4'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'
