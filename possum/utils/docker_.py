@@ -1,12 +1,65 @@
+import io
 import os
 import sys
 import tempfile
+import textwrap
 import time
 
 import docker
-from docker.errors import APIError, ImageNotFound
+from docker.errors import APIError, BuildError, ImageNotFound
 
+from possum import __version__
 from possum.config import logger
+
+
+def dockerfile():
+    return io.BytesIO(
+        textwrap.dedent(
+            f'''\
+            FROM lambci/lambda:build-python3.6
+            
+            RUN /var/lang/bin/pip install -U pip && \\
+                /var/lang/bin/pip install pipenv
+            
+            RUN /var/lang/bin/pip install possum=={__version__}
+            
+            WORKDIR /var/task\
+            '''
+        ).encode()
+    )
+
+
+def build_docker_image():
+    logger.info(f"Building 'possum:{__version__}' Docker image (this may take "
+                "several minutes)...")
+    client = docker.from_env()
+    try:
+        image = client.images.build(
+            fileobj=dockerfile(),
+            tag=f'possum:{__version__}',
+            quiet=False,
+            rm=True,
+            pull=True
+        )
+
+        logger.info("Tagging as 'latest'...")
+        if image[0].tag('possum', 'latest'):
+            image[0].reload()
+        else:
+            logger.info('Unable to add additional tag')
+
+    except APIError as err:
+        logger.error(f'Unable to build the Docker image: {err.explanation}')
+        sys.exit(1)
+
+    except BuildError as err:
+        logger.error(f'Unable to build the Docker image: {err.msg}')
+        sys.exit(1)
+
+    image_id = image[0].short_id.split(':')[-1]
+    logger.info("Image successfully created:\n"
+                f"  ID: {image_id}\n"
+                f"  Tags: {', '.join(image[0].tags)}")
 
 
 def run_in_docker(user_dir, possum_path, image_name):
@@ -21,9 +74,9 @@ def run_in_docker(user_dir, possum_path, image_name):
     except ValueError:
         pass
 
-    docker_directory = tempfile.mkdtemp(
-        suffix='-docker', prefix='possum-', dir='/tmp')
-    logger.info(f'Working Docker directory: {docker_directory}')
+    # docker_directory = tempfile.mkdtemp(
+    #     suffix='-docker', prefix='possum-', dir='/tmp')
+    # logger.info(f'Working Docker directory: {docker_directory}')
 
     client = docker.from_env()
 
@@ -56,13 +109,23 @@ def run_in_docker(user_dir, possum_path, image_name):
                     'mode': 'rw'
                 },
                 os.getcwd(): {
-                    'bind': '/task',
-                    'mode': 'rw'
-                },
-                docker_directory: {
-                    'bind': '/tmp',
+                    'bind': '/var/task',
                     'mode': 'rw'
                 }
+                # I found an edge case with Lambdas that are installing the
+                # cryptography package where the "Creating Lambda Package" step
+                # would stream GBs worth of data into the zip file. This has
+                # something to do with the temp build location being mounted
+                # from the host.
+                #
+                # For now, I'm removing this. Builds using Docker will not have
+                # the ability to check hashes of prior built packages to skip
+                # unnecessary rebuilds.
+
+                # docker_directory: {
+                #     'bind': '/tmp',
+                #     'mode': 'rw'
+                # }
             },
             detach=True
         )

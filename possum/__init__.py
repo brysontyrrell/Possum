@@ -1,5 +1,5 @@
 __title__ = 'possum'
-__version__ = '1.4.5'
+__version__ = '1.4.5b2'
 __author__ = 'Bryson Tyrrell'
 __author_email__ = 'bryson.tyrrell@gmail.com'
 __license__ = 'MIT'

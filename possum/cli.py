@@ -11,6 +11,7 @@ from possum import __version__
 from possum.config import logger, configure_logger
 from possum.exc import PipenvPathNotFound
 from possum.utils import (
+    build_docker_image,
     copy_installed_packages,
     create_lambda_package,
     get_existing_site_packages,
@@ -29,6 +30,14 @@ S3_BUCKET_NAME = ''
 S3_ARTIFACT_DIR = ''
 
 
+class CommandHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    def _format_action(self, action):
+        parts = super(argparse.RawDescriptionHelpFormatter, self)._format_action(action)
+        if action.nargs == argparse.PARSER:
+            parts = "\n".join(parts.split("\n")[1:])
+        return parts
+
+
 def arguments():
     """Parse command line arguments when invoked as a CLI tool.
 
@@ -39,53 +48,8 @@ def arguments():
         'possum',
         description='Possum is a utility to package Python-based serverless '
                     'applications using the Amazon Serverless Application '
-                    'model with per-function dependencies.'
-    )
-
-    parser.add_argument(
-        's3_bucket',
-        help="The S3 bucket to upload artifacts. You may optionally pass a "
-             "path within the bucket to store the Lambda artifacts (defaults "
-             "to 'possum-{timestamp}').",
-        metavar='s3_bucket'
-    )
-
-    parser.add_argument(
-        '-t', '--template',
-        help='The filename of the SAM template.',
-        default='template.yaml',
-        metavar='template'
-    )
-
-    parser.add_argument(
-        '-o', '--output-template',
-        help='Optional filename for the output template.',
-        metavar='output'
-    )
-
-    parser.add_argument(
-        '-p', '--profile',
-        help='Optional profile name for AWS credentials.',
-        metavar='profile_name'
-    )
-
-    parser.add_argument(
-        '-c', '--clean',
-        help='Build all Lambda packages, ignoring previous run.',
-        action='store_true'
-    )
-
-    parser.add_argument(
-        '--docker',
-        help='Build Lambda packages within a Docker container environment.',
-        action='store_true'
-    )
-
-    parser.add_argument(
-        '--docker-image',
-        help="Specify a Docker image to use (defaults to 'possum:latest').",
-        default='possum:latest',
-        metavar='image_name'
+                    'model with per-function dependencies.',
+        formatter_class=CommandHelpFormatter
     )
 
     parser.add_argument(
@@ -94,14 +58,75 @@ def arguments():
         action='version',
         version=f'Possum {__version__}'
     )
+    parser._optionals.title = 'Global Options'
+
+    subparsers = parser.add_subparsers(title='Commands')
+
+    main_legacy_parser = subparsers.add_parser(
+        'package',
+        help='Package the Serverless application, upload to S3, and generate a '
+             'deployment template file.'
+    )
+    main_legacy_parser.set_defaults(func=main_legacy)
+
+    main_legacy_parser.add_argument(
+        's3_bucket',
+        help="The S3 bucket to upload artifacts. You may optionally pass a "
+             "path within the bucket to store the Lambda artifacts (defaults "
+             "to 'possum-{timestamp}').",
+        metavar='s3_bucket'
+    )
+
+    main_legacy_parser.add_argument(
+        '-t', '--template',
+        help='The filename of the SAM template.',
+        default='template.yaml',
+        metavar='template'
+    )
+
+    main_legacy_parser.add_argument(
+        '-o', '--output-template',
+        help='Optional filename for the output template.',
+        metavar='output'
+    )
+
+    main_legacy_parser.add_argument(
+        '-p', '--profile',
+        help='Optional profile name for AWS credentials.',
+        metavar='profile_name'
+    )
+
+    main_legacy_parser.add_argument(
+        '-c', '--clean',
+        help='Build all Lambda packages, ignoring previous run.',
+        action='store_true'
+    )
+
+    main_legacy_parser.add_argument(
+        '--docker',
+        help='Build Lambda packages within a Docker container environment.',
+        action='store_true'
+    )
+
+    main_legacy_parser.add_argument(
+        '--docker-image',
+        help="Specify a Docker image to use (defaults to 'possum:latest').",
+        default='possum:latest',
+        metavar='image_name'
+    )
+
+    )
+    docker_image_parser.set_defaults(func=docker_image)
 
     return parser.parse_args()
 
 
-def main():
-    args = arguments()
-    configure_logger()
 
+def docker_image(args):
+    build_docker_image()
+
+
+def main_legacy(args):
     try:
         possum_file = PossumFile(USER_DIR)
     except scanner.ScannerError:
@@ -238,15 +263,15 @@ def main():
 
             pipenvw.get_virtual_environment_path()
 
-            logger.info(f'{func}: Environment created at {pipenvw.path}')
+            logger.info(f'{func}: Environment created at {pipenvw.venv_path}')
 
-            do_not_copy = get_existing_site_packages(pipenvw.path)
+            do_not_copy = get_existing_site_packages(pipenvw.venv_path)
 
             logger.info(f'{func}: Installing requirements...')
             pipenvw.install_packages()
 
             logger.info(f'{func}: Copying installed packages...')
-            copy_installed_packages(pipenvw.path, do_not_copy)
+            copy_installed_packages(pipenvw.venv_path, do_not_copy)
 
             logger.info(f'{func}: Removing Lambda build environment...')
             pipenvw.remove_virtualenv()
@@ -292,3 +317,12 @@ def main():
             fobj.write(deployment_template)
 
     possum_file.save()
+
+
+def main():
+    configure_logger()
+
+    args = arguments()
+    args.func(args)
+
+    sys.exit(0)
