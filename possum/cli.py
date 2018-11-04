@@ -11,7 +11,7 @@ from possum import __version__
 from possum.config import logger, configure_logger
 from possum.exc import PipenvPathNotFound
 from possum.packages import (
-    copy_installed_packages,
+    move_installed_packages,
     create_lambda_package,
     get_existing_site_packages,
     upload_packages
@@ -137,6 +137,13 @@ def arguments():
     )
     docker_image_parser.set_defaults(func=docker_image)
 
+    docker_image_parser.add_argument(
+        '--pypi-version',
+        help='Select another version of Possum to install from PyPI.',
+        default=__version__,
+        metavar='<version>'
+    )
+
     return parser.parse_args()
 
 
@@ -176,7 +183,7 @@ def gen_reqs(args):
 
 
 def docker_image(args):
-    build_docker_image()
+    build_docker_image(args.pypi_version)
 
 
 def main_legacy(args):
@@ -324,7 +331,7 @@ def main_legacy(args):
             pipenvw.install_packages()
 
             logger.info(f'{func}: Copying installed packages...')
-            copy_installed_packages(pipenvw.venv_path, do_not_copy)
+            move_installed_packages(pipenvw.venv_path, do_not_copy)
 
             logger.info(f'{func}: Removing Lambda build environment...')
             pipenvw.remove_virtualenv()

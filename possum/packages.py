@@ -14,20 +14,10 @@ from possum.config import logger
 
 __all__ = [
     'get_existing_site_packages',
-    'copy_installed_packages',
+    'move_installed_packages',
     'create_lambda_package',
     'upload_packages'
 ]
-
-
-def _copy(src, dst):
-    try:
-        shutil.copytree(src, dst)
-    except OSError as exc:
-        if exc.errno == errno.ENOTDIR:
-            shutil.copy(src, dst)
-        else:
-            raise
 
 
 def get_existing_site_packages(venv_path):
@@ -40,11 +30,11 @@ def get_existing_site_packages(venv_path):
     return os.listdir(path)
 
 
-def copy_installed_packages(venv_path, exclusions):
+def move_installed_packages(venv_path, exclusions):
     path = os.path.join(venv_path, 'lib/python3.6/site-packages')
     packages = [i for i in os.listdir(path) if i not in exclusions]
     for package in packages:
-        _copy(os.path.join(path, package), os.path.join(os.getcwd(), package))
+        shutil.move(os.path.join(path, package), os.path.join(os.getcwd(), package))
 
 
 def create_lambda_package(build_dir, artifact_directory):

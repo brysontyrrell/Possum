@@ -8,11 +8,10 @@ import time
 import docker
 from docker.errors import APIError, BuildError, ImageNotFound
 
-from possum import __version__
 from possum.config import logger
 
 
-def dockerfile():
+def dockerfile(version):
     return io.BytesIO(
         textwrap.dedent(
             f'''\
@@ -21,7 +20,7 @@ def dockerfile():
             RUN /var/lang/bin/pip install -U pip && \\
                 /var/lang/bin/pip install pipenv
             
-            RUN /var/lang/bin/pip install possum=={__version__}
+            RUN /var/lang/bin/pip install possum=={version}
             
             WORKDIR /var/task\
             '''
@@ -29,14 +28,14 @@ def dockerfile():
     )
 
 
-def build_docker_image():
-    logger.info(f"Building 'possum:{__version__}' Docker image (this may take "
+def build_docker_image(version):
+    logger.info(f"Building 'possum:{version}' Docker image (this may take "
                 "several minutes)...")
     client = docker.from_env()
     try:
         image = client.images.build(
-            fileobj=dockerfile(),
-            tag=f'possum:{__version__}',
+            fileobj=dockerfile(version),
+            tag=f'possum:{version}',
             quiet=False,
             rm=True,
             pull=True
@@ -112,20 +111,6 @@ def run_in_docker(user_dir, possum_path, image_name):
                     'bind': '/var/task',
                     'mode': 'rw'
                 }
-                # I found an edge case with Lambdas that are installing the
-                # cryptography package where the "Creating Lambda Package" step
-                # would stream GBs worth of data into the zip file. This has
-                # something to do with the temp build location being mounted
-                # from the host.
-                #
-                # For now, I'm removing this. Builds using Docker will not have
-                # the ability to check hashes of prior built packages to skip
-                # unnecessary rebuilds.
-
-                # docker_directory: {
-                #     'bind': '/tmp',
-                #     'mode': 'rw'
-                # }
             },
             detach=True
         )

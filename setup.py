@@ -26,7 +26,8 @@ about = about_module()
 requirements = [
     "boto3>=1.9.36",
     "docker>=3.5.1",
-    "ruamel.yaml>=0.15.76"
+    "ruamel.yaml>=0.15.76",
+    "toml>=0.10.0"
 ]
 
 setup(

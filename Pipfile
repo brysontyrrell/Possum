@@ -4,12 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [dev-packages]
-toml = "*"
 
 [packages]
 "boto3" = "*"
 "ruamel.yaml" = "*"
 "docker" = "*"
+toml = "*"
 
 [requires]
 python_version = "3.6"
