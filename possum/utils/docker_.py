@@ -1,7 +1,6 @@
 import io
 import os
 import sys
-import tempfile
 import textwrap
 import time
 
