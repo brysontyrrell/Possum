@@ -35,6 +35,16 @@ class PipenvWrapper:
         result = p.communicate()
         return result[0].decode('ascii').strip('\n')
 
+    def get_site_packages(self):
+        return subprocess.check_output(
+            [
+                'pipenv', 'run', 'python', '-c',
+                'from distutils.sysconfig import get_python_lib; '
+                'print(get_python_lib())'
+            ],
+            universal_newlines=True
+        ).strip()
+
     def install_packages(self):
         p = subprocess.Popen(
             [self.pipenv_path, 'install'],

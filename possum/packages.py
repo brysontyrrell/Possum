@@ -30,12 +30,13 @@ def get_existing_site_packages(venv_path):
     return os.listdir(path)
 
 
-def move_installed_packages(venv_path, exclusions):
-    path = os.path.join(venv_path, 'lib/python3.6/site-packages')
-    packages = [i for i in os.listdir(path) if i not in exclusions]
+# def move_installed_packages(venv_path, exclusions):
+def move_installed_packages(site_packages_path, exclusions):
+    # path = os.path.join(venv_path, 'lib/python3.6/site-packages')
+    packages = [i for i in os.listdir(site_packages_path) if i not in exclusions]
     for package in packages:
         shutil.move(
-            os.path.join(path, package),
+            os.path.join(site_packages_path, package),
             os.path.join(os.getcwd(), package)
         )
 
