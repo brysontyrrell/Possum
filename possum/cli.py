@@ -16,7 +16,11 @@ from possum.packages import (
     get_existing_site_packages,
     upload_packages
 )
-from possum.reqs import get_pipfile_packages, get_imports, generate_requirements
+from possum.reqs import (
+    get_pipfile_packages,
+    parse_requirements,
+    write_requirements
+)
 from possum.template import get_global, update_template_resource, SAMTemplate
 from possum.utils import (
     build_docker_image,
@@ -49,7 +53,7 @@ def arguments():
     parser = argparse.ArgumentParser(
         'possum',
         description='Possum is a utility to package Python-based serverless '
-                    'applications using the Amazon Serverless Application '
+                    'applications using the\nAmazon Serverless Application '
                     'model with per-function dependencies.',
         formatter_class=CommandHelpFormatter
     )
@@ -117,14 +121,14 @@ def arguments():
         metavar='image_name'
     )
 
-    gen_reqs_parser = subparsers.add_parser(
-        'generate-requirements',
-        help="Generate 'requirements.txt' files for each Lambda function from "
+    sync_reqs_parser = subparsers.add_parser(
+        'sync-requirements',
+        help="Sync any 'requirements.txt' files for each Lambda function from "
              "the project's Pipfile (BETA)."
     )
-    gen_reqs_parser.set_defaults(func=gen_reqs)
+    sync_reqs_parser.set_defaults(func=sync_requirements)
 
-    gen_reqs_parser.add_argument(
+    sync_reqs_parser.add_argument(
         '-t', '--template',
         help='The filename of the SAM template.',
         default='template.yaml',
@@ -144,10 +148,14 @@ def arguments():
         metavar='<version>'
     )
 
+    if len(sys.argv) == 1:
+        parser.print_usage()
+        sys.exit(1)
+
     return parser.parse_args()
 
 
-def gen_reqs(args):
+def sync_requirements(args):
     if not os.path.exists(os.path.join(WORKING_DIR, 'Pipfile')) and \
             os.path.exists(os.path.join(WORKING_DIR, 'Pipfile.lock')):
         logger.error(
@@ -155,7 +163,6 @@ def gen_reqs(args):
         sys.exit(1)
 
     template = SAMTemplate(args.template)
-
     pipfile_packages = get_pipfile_packages()
 
     logger.info('Evaluating Lambda function dependencies...\n')
@@ -167,17 +174,19 @@ def gen_reqs(args):
             continue
 
         lambda_code_dir = v['Properties']['CodeUri']
+        requirements = parse_requirements(lambda_code_dir)
 
-        imports = get_imports(
-            os.path.join(WORKING_DIR, lambda_code_dir, handler_file))
+        if not requirements:
+            logger.info(f"{k}: No requirements.txt file for this Lambda")
+            continue
 
-        requirements = generate_requirements(
-            pipfile_packages, imports, lambda_code_dir)
+        results = write_requirements(
+            pipfile_packages, requirements, lambda_code_dir)
 
-        if requirements:
+        if results:
             logger.info(f"{k}: A requirements.txt file has been generated with "
                         "the following packages:")
-            logger.info(f"{k}: {', '.join(requirements)}\n")
+            logger.info(f"{k}: {', '.join(results)}\n")
         else:
             logger.info(f"{k}: No requirements.txt file generated\n")
 
@@ -383,6 +392,7 @@ def main():
     configure_logger()
 
     args = arguments()
-    args.func(args)
+    if hasattr(args, 'func'):
+        args.func(args)
 
     sys.exit(0)

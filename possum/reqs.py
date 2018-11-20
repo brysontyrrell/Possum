@@ -33,32 +33,38 @@ def get_pipfile_packages():
     return values
 
 
-def get_imports(path):
-    values = list()
+def parse_requirements(lambda_path):
+    requirements_filepath = os.path.join(lambda_path, 'requirements.txt')
 
-    with open(path, 'r') as f:
-        for l in f.readlines():
-            match = import_regex.match(l)
-            if match:
-                pkg_name = match.group(1)
-                if pkg_name not in ('boto3', 'botocore'):
-                    values.append(pkg_name)
+    if os.path.isfile(requirements_filepath):
+        with open(requirements_filepath, 'r') as rf:
+            requirements_raw = rf.read().splitlines()
+    else:
+        return None
 
-    return set(values)
+    requirements = {}
+    for line in requirements_raw:
+        try:
+            name = line.split('==')[0]
+        except IndexError:
+            continue
+
+        requirements[name] = {'pip': line}
+
+    return requirements
 
 
-def generate_requirements(pipfile_packages, lambda_packages, dest):
-    packages = [
-        pipfile_packages[i]['pip']
-        for i in lambda_packages
-        if i in pipfile_packages.keys()
-    ]
+def write_requirements(pipfile_packages, requirements_packages, dest):
+    matched_requirements = \
+        set([i.lower() for i in pipfile_packages.keys()]) & \
+        set([i.lower() for i in requirements_packages.keys()])
 
-    if packages:
+    if matched_requirements:
         with open(os.path.join(dest, 'requirements.txt'), 'w') as f:
-            for package in packages:
-                f.write(package + '\n')
+            for package in sorted(matched_requirements):
+                f.write(pipfile_packages[package]['pip'] + '\n')
 
-        return packages
+        return matched_requirements
+
     else:
         return None
