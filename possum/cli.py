@@ -288,7 +288,7 @@ def main():
         logger.info("Writing deployment template to "
                     f"'{args.output_template}'...\n")
         with open(os.path.join(WORKING_DIR, args.output_template),
-                  'wt') as fobj:
+                  'w+') as fobj:
             fobj.write(deployment_template)
 
     possum_file.save()
