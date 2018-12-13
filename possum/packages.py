@@ -1,9 +1,9 @@
 import distutils.sysconfig as sysconfig
-import errno
 import os
 import shutil
 import sys
 import uuid
+import zipfile
 
 import boto3
 from boto3.exceptions import S3UploadFailedError
@@ -14,20 +14,10 @@ from possum.config import logger
 
 __all__ = [
     'get_existing_site_packages',
-    'copy_installed_packages',
+    'move_installed_packages',
     'create_lambda_package',
     'upload_packages'
 ]
-
-
-def _copy(src, dst):
-    try:
-        shutil.copytree(src, dst)
-    except OSError as exc:
-        if exc.errno == errno.ENOTDIR:
-            shutil.copy(src, dst)
-        else:
-            raise
 
 
 def get_existing_site_packages(venv_path):
@@ -40,23 +30,32 @@ def get_existing_site_packages(venv_path):
     return os.listdir(path)
 
 
-def copy_installed_packages(venv_path, exclusions):
-    path = os.path.join(venv_path, 'lib/python3.6/site-packages')
-    packages = [i for i in os.listdir(path) if i not in exclusions]
+# def move_installed_packages(venv_path, exclusions):
+def move_installed_packages(site_packages_path, exclusions):
+    # path = os.path.join(venv_path, 'lib/python3.6/site-packages')
+    packages = [i for i in os.listdir(site_packages_path) if i not in exclusions]
     for package in packages:
-        _copy(os.path.join(path, package), os.path.join(os.getcwd(), package))
+        shutil.move(
+            os.path.join(site_packages_path, package),
+            os.path.join(os.getcwd(), package)
+        )
 
 
 def create_lambda_package(build_dir, artifact_directory):
     archive_name = uuid.uuid4().hex
-    shutil.make_archive(
-        archive_name,
-        'zip',
-        root_dir=build_dir,
-        base_dir='./'
-    )
-    shutil.move(archive_name + '.zip', artifact_directory)
-    return archive_name + '.zip'
+    path_len = len(build_dir)
+
+    with zipfile.ZipFile(os.path.join(artifact_directory, archive_name),
+                         'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for root, dirs, files in os.walk(build_dir):
+            base_dir = root[path_len:]
+            for file in files:
+                zip_file.write(
+                    os.path.join(root, file),
+                    os.path.join(base_dir, file)
+                )
+
+    return archive_name
 
 
 def upload_packages(package_directory, bucket_name,
